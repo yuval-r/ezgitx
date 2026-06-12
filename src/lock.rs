@@ -78,38 +78,49 @@ fn is_stale(info: Option<&LockInfo>, ttl: Duration) -> bool {
 
 /// One non-blocking acquisition attempt. `Err(holder)` reports the live
 /// holder when readable.
+///
+/// The lock is published *atomically with its content*: the JSON is fully
+/// written to a private pid-suffixed tmp file, then `hard_link` makes it
+/// appear at the lock path in one step. A reader can therefore never observe
+/// an empty or half-written lock — which it would have to classify as stale
+/// and break, racing a live holder.
 fn try_acquire(path: &Path, op: &str, ttl: Duration) -> Result<LockGuard, Option<LockInfo>> {
-    if let Some(dir) = path.parent() {
-        let _ = fs::create_dir_all(dir);
+    let Some(dir) = path.parent() else {
+        return Err(None);
+    };
+    let _ = fs::create_dir_all(dir);
+
+    let info = LockInfo {
+        pid: std::process::id(),
+        hostname: hostname(),
+        started_at: jiff::Timestamp::now().to_string(),
+        op: op.to_string(),
+    };
+    let Ok(payload) = serde_json::to_vec(&info) else {
+        return Err(None);
+    };
+    let tmp = dir.join(format!(
+        ".{}.{}.tmp",
+        path.file_name().unwrap_or_default().to_string_lossy(),
+        std::process::id()
+    ));
+    if fs::write(&tmp, payload).is_err() {
+        let _ = fs::remove_file(&tmp);
+        return Err(None);
     }
-    loop {
-        match fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(path)
-        {
-            Ok(file) => {
-                let info = LockInfo {
-                    pid: std::process::id(),
-                    hostname: hostname(),
-                    started_at: jiff::Timestamp::now().to_string(),
-                    op: op.to_string(),
-                };
-                if serde_json::to_writer(&file, &info).is_err() {
-                    // Don't leave an empty/corrupt lock for others to break.
-                    drop(file);
-                    let _ = fs::remove_file(path);
-                    return Err(None);
-                }
-                return Ok(LockGuard {
+
+    let result = loop {
+        match fs::hard_link(&tmp, path) {
+            Ok(()) => {
+                break Ok(LockGuard {
                     path: path.to_path_buf(),
                 });
             }
             Err(e) if e.kind() == ErrorKind::AlreadyExists => {
                 let content = match fs::read_to_string(path) {
                     Ok(s) => s,
-                    // Holder released between create_new and the read:
-                    // retry immediately, no false "stale lock" notice.
+                    // Holder released between the link attempt and the
+                    // read: retry immediately, no false "stale lock" notice.
                     Err(e) if e.kind() == ErrorKind::NotFound => continue,
                     Err(_) => String::new(), // unreadable → stale path below
                 };
@@ -117,14 +128,16 @@ fn try_acquire(path: &Path, op: &str, ttl: Duration) -> Result<LockGuard, Option
                 if is_stale(holder.as_ref(), ttl) {
                     eprintln!("ezgitx: breaking stale lock {}", path.display());
                     let _ = fs::remove_file(path);
-                    // Loop: if we raced another breaker, create_new decides.
+                    // Loop: if we raced another breaker, hard_link decides.
                     continue;
                 }
-                return Err(holder);
+                break Err(holder);
             }
-            Err(_) => return Err(None),
+            Err(_) => break Err(None),
         }
-    }
+    };
+    let _ = fs::remove_file(&tmp);
+    result
 }
 
 fn held_error(path: &Path, holder: Option<LockInfo>) -> ErrorInfo {
@@ -234,6 +247,26 @@ mod tests {
         };
         fs::write(&path, serde_json::to_string(&stale).unwrap()).unwrap();
         assert!(acquire(&path, "pull", None).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn lock_publishes_full_content_and_leaves_no_tmp() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = repo_lock_path(dir.path(), "a");
+        let guard = acquire(&path, "pull", None).await.unwrap();
+        // The published lock is complete, parseable JSON the moment it
+        // exists, and the tmp staging file is gone while the lock is held.
+        let info: LockInfo = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(info.pid, std::process::id());
+        assert_eq!(info.op, "pull");
+        let leftovers: Vec<_> = fs::read_dir(path.parent().unwrap())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path() != path)
+            .collect();
+        assert!(leftovers.is_empty(), "staging leftovers: {leftovers:?}");
+        drop(guard);
+        assert!(!path.exists());
     }
 
     #[tokio::test]
