@@ -100,8 +100,9 @@ evidence-first:
   The graph must be a DAG — cycles fail at config load with exit 2.
 - Validate before declaring done: `ezgitx status` (config errors exit 2),
   then a cheap dry-run `ezgitx run --all "git rev-parse --short HEAD"` to
-  prove every repo resolves and executes, then re-run `ezgitx init-skill`
-  so this skill reflects the updated workspace.
+  prove every repo resolves and executes. (`init-skill` writes a static
+  template — config changes don't alter it; re-run it only after upgrading
+  ezgitx itself.)
 
 ## Locking
 
