@@ -57,6 +57,11 @@ Target narrowly instead of scanning everything:
   parallel. With no command, each repo's configured `default_cmd` runs.
   Ends with a `{"type": "summary", ...}` line. `run` takes **no locks** —
   it is safe to run concurrently with other sessions, including pulls.
+- `ezgitx run --with-deps` — dependency-ordered execution: stale upstream
+  dependencies build first (their `default_cmd`), in topological order,
+  then your targets. **Prefer this over manually sequencing builds across
+  repos** — e.g. `ezgitx run --all --with-deps` builds the whole workspace
+  in the right order in one command. Fresh upstreams are skipped.
 - `ezgitx check-impact` — list downstream repos affected by changes in the
   current (or `--repo <name>`) repo, with `depth` and dependency path `via`.
   Add `--check` to also run each affected repo's check command in

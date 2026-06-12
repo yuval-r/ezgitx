@@ -67,7 +67,16 @@ pub fn load(start: &Path) -> Result<Workspace, ErrorInfo> {
         )
     })?;
 
-    let mut repos: BTreeMap<String, Repo> = BTreeMap::new();
+    // Merged at the Option level so "not specified" stays distinct from
+    // explicit values (e.g. `depends_on: []`) until every group is seen —
+    // collapsing early makes conflict detection depend on group order.
+    struct Pending {
+        path: PathBuf,
+        default_cmd: Option<String>,
+        check_cmd: Option<String>,
+        depends_on: Option<Vec<String>>,
+    }
+    let mut pending: BTreeMap<String, Pending> = BTreeMap::new();
     let mut groups: BTreeMap<String, Vec<String>> = BTreeMap::new();
 
     for (group_name, entries) in &cfg.groups {
@@ -84,7 +93,7 @@ pub fn load(start: &Path) -> Result<Workspace, ErrorInfo> {
                         format!("repo path {:?} has no directory name", entry.path),
                     )
                 })?;
-            if let Some(existing) = repos.get(&name) {
+            if let Some(existing) = pending.get_mut(&name) {
                 if existing.path != path {
                     return Err(ErrorInfo::new(
                         ErrorCode::ConfigInvalid,
@@ -95,17 +104,37 @@ pub fn load(start: &Path) -> Result<Workspace, ErrorInfo> {
                         ),
                     ));
                 }
-                // Same repo listed in another group: membership only; the
-                // first entry's cmd/deps fields win.
+                // Same repo listed in another group: entries MERGE — fields
+                // fill in from whichever entry provides them. First-wins
+                // would resolve by group iteration order (alphabetical, not
+                // file order), silently dropping commands. Conflicting
+                // values fail loudly instead (PRD §4.1).
+                merge_field(
+                    &mut existing.default_cmd,
+                    &entry.default_cmd,
+                    "default_cmd",
+                    &name,
+                )?;
+                merge_field(
+                    &mut existing.check_cmd,
+                    &entry.check_cmd,
+                    "check_cmd",
+                    &name,
+                )?;
+                merge_field(
+                    &mut existing.depends_on,
+                    &entry.depends_on,
+                    "depends_on",
+                    &name,
+                )?;
             } else {
-                repos.insert(
+                pending.insert(
                     name.clone(),
-                    Repo {
-                        name: name.clone(),
+                    Pending {
                         path,
                         default_cmd: entry.default_cmd.clone(),
                         check_cmd: entry.check_cmd.clone(),
-                        depends_on: entry.depends_on.clone().unwrap_or_default(),
+                        depends_on: entry.depends_on.clone(),
                     },
                 );
             }
@@ -114,6 +143,22 @@ pub fn load(start: &Path) -> Result<Workspace, ErrorInfo> {
             }
         }
     }
+
+    let repos: BTreeMap<String, Repo> = pending
+        .into_iter()
+        .map(|(name, p)| {
+            (
+                name.clone(),
+                Repo {
+                    name,
+                    path: p.path,
+                    default_cmd: p.default_cmd,
+                    check_cmd: p.check_cmd,
+                    depends_on: p.depends_on.unwrap_or_default(),
+                },
+            )
+        })
+        .collect();
 
     for repo in repos.values() {
         for dep in &repo.depends_on {
@@ -179,6 +224,28 @@ impl Workspace {
         }
 
         Ok(names.into_iter().map(|n| self.repos[&n].clone()).collect())
+    }
+}
+
+/// Merge an optional config field from another group's entry for the same
+/// repo: absent stays, missing fills in, identical passes, conflict errors.
+fn merge_field<T: PartialEq + Clone + std::fmt::Debug>(
+    existing: &mut Option<T>,
+    incoming: &Option<T>,
+    field: &str,
+    repo: &str,
+) -> Result<(), ErrorInfo> {
+    match (existing.as_ref(), incoming.as_ref()) {
+        (_, None) => Ok(()),
+        (None, Some(value)) => {
+            *existing = Some(value.clone());
+            Ok(())
+        }
+        (Some(a), Some(b)) if a == b => Ok(()),
+        (Some(a), Some(b)) => Err(ErrorInfo::new(
+            ErrorCode::ConfigInvalid,
+            format!("repo {repo:?} has conflicting {field} across groups: {a:?} vs {b:?}"),
+        )),
     }
 }
 
@@ -287,6 +354,107 @@ mod tests {
         let deep = ws.root.join("a/x/y");
         std::fs::create_dir_all(&deep).unwrap();
         assert_eq!(discover_root(&deep).unwrap(), ws.root);
+    }
+
+    #[test]
+    fn multi_group_fields_merge_regardless_of_group_order() {
+        // Dogfooded bug: groups iterate in BTreeMap (alphabetical) order, so
+        // a bare membership entry in an alphabetically-earlier group ("aux")
+        // silently erased the real entry's commands under first-wins.
+        let (_d, ws) = ws_with(
+            "version: 1\n\
+             groups:\n\
+             \x20 aux:\n\
+             \x20   - path: ./sdk\n\
+             \x20 build:\n\
+             \x20   - path: ./sdk\n\
+             \x20     default_cmd: \"make\"\n\
+             \x20     check_cmd: \"make test\"\n\
+             \x20   - path: ./app\n\
+             \x20     depends_on: [\"sdk\"]\n\
+             \x20 extra:\n\
+             \x20   - path: ./app\n",
+        );
+        let sdk = &ws.repos["sdk"];
+        assert_eq!(sdk.default_cmd.as_deref(), Some("make"));
+        assert_eq!(sdk.check_cmd.as_deref(), Some("make test"));
+        assert_eq!(ws.repos["app"].depends_on, ["sdk"]);
+    }
+
+    #[test]
+    fn conflicting_fields_across_groups_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join(CONFIG_FILE),
+            "version: 1\n\
+             groups:\n\
+             \x20 g1:\n\
+             \x20   - path: ./a\n\
+             \x20     default_cmd: \"make\"\n\
+             \x20 g2:\n\
+             \x20   - path: ./a\n\
+             \x20     default_cmd: \"cargo build\"\n",
+        )
+        .unwrap();
+        let err = load(dir.path()).unwrap_err();
+        assert_eq!(err.code, ErrorCode::ConfigInvalid);
+        assert!(
+            err.message.contains("default_cmd"),
+            "message: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn explicit_empty_depends_on_conflicts_symmetrically() {
+        // depends_on: [] is an explicit declaration, not absence. It must
+        // conflict with a non-empty list in BOTH group orders — merging
+        // silently in one order and erroring in the other is the same
+        // order-dependence this change exists to remove.
+        for (first_group, second_group) in [("aaa", "zzz"), ("zzz", "aaa")] {
+            let dir = tempfile::tempdir().unwrap();
+            std::fs::write(
+                dir.path().join(CONFIG_FILE),
+                format!(
+                    "version: 1\n\
+                     groups:\n\
+                     \x20 {first_group}:\n\
+                     \x20   - path: ./a\n\
+                     \x20     depends_on: []\n\
+                     \x20   - path: ./sdk\n\
+                     \x20 {second_group}:\n\
+                     \x20   - path: ./a\n\
+                     \x20     depends_on: [\"sdk\"]\n"
+                ),
+            )
+            .unwrap();
+            let err = load(dir.path()).unwrap_err();
+            assert_eq!(
+                err.code,
+                ErrorCode::ConfigInvalid,
+                "groups {first_group}/{second_group} must conflict"
+            );
+            assert!(
+                err.message.contains("depends_on"),
+                "message: {}",
+                err.message
+            );
+        }
+    }
+
+    #[test]
+    fn identical_duplicate_fields_are_fine() {
+        let (_d, ws) = ws_with(
+            "version: 1\n\
+             groups:\n\
+             \x20 g1:\n\
+             \x20   - path: ./a\n\
+             \x20     default_cmd: \"make\"\n\
+             \x20 g2:\n\
+             \x20   - path: ./a\n\
+             \x20     default_cmd: \"make\"\n",
+        );
+        assert_eq!(ws.repos["a"].default_cmd.as_deref(), Some("make"));
     }
 
     #[test]
