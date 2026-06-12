@@ -1,0 +1,137 @@
+mod common;
+
+use common::*;
+
+/// core <- lib <- app, each default_cmd appends its name to a shared log so
+/// execution order is observable.
+fn chain(f: &Fixture, core_cmd: &str) {
+    f.repo("core");
+    f.repo("lib");
+    f.repo("app");
+    f.config(&format!(
+        "version: 1\n\
+         groups:\n\
+         \x20 g:\n\
+         \x20   - path: ./core\n\
+         \x20     default_cmd: \"{core_cmd}\"\n\
+         \x20   - path: ./lib\n\
+         \x20     default_cmd: \"echo lib >> ../build.log\"\n\
+         \x20     depends_on: [\"core\"]\n\
+         \x20   - path: ./app\n\
+         \x20     default_cmd: \"echo app >> ../build.log\"\n\
+         \x20     depends_on: [\"lib\"]\n"
+    ));
+}
+
+fn build_log(f: &Fixture) -> Vec<String> {
+    std::fs::read_to_string(f.root().join("build.log"))
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_string)
+        .collect()
+}
+
+#[test]
+fn with_deps_builds_stale_upstreams_in_order() {
+    let f = Fixture::new();
+    chain(&f, "echo core >> ../build.log");
+
+    let assert = f
+        .ezgitx()
+        .args(["run", "--repo", "app", "--with-deps"])
+        .assert()
+        .code(0);
+    let lines = jsonl(&assert.get_output().stdout);
+    assert_eq!(summary(&lines)["total"], 3);
+    assert_eq!(summary(&lines)["passed"], 3);
+    assert_eq!(build_log(&f), ["core", "lib", "app"]);
+}
+
+#[test]
+fn fresh_upstreams_are_skipped() {
+    let f = Fixture::new();
+    chain(&f, "echo core >> ../build.log");
+
+    f.ezgitx()
+        .args(["run", "--repo", "app", "--with-deps"])
+        .assert()
+        .code(0);
+    std::fs::remove_file(f.root().join("build.log")).unwrap();
+
+    // Everything fresh: only the target runs.
+    let assert = f
+        .ezgitx()
+        .args(["run", "--repo", "app", "--with-deps"])
+        .assert()
+        .code(0);
+    let lines = jsonl(&assert.get_output().stdout);
+    assert_eq!(summary(&lines)["total"], 1);
+    assert_eq!(build_log(&f), ["app"]);
+
+    // New commit in core: core is stale again, lib stays fresh.
+    f.commit(&f.root().join("core"), "change.txt", "x");
+    std::fs::remove_file(f.root().join("build.log")).unwrap();
+    let assert = f
+        .ezgitx()
+        .args(["run", "--repo", "app", "--with-deps"])
+        .assert()
+        .code(0);
+    let lines = jsonl(&assert.get_output().stdout);
+    assert_eq!(summary(&lines)["total"], 2);
+    assert_eq!(build_log(&f), ["core", "app"]);
+}
+
+#[test]
+fn upstream_failure_skips_dependents() {
+    let f = Fixture::new();
+    chain(&f, "false");
+
+    let assert = f
+        .ezgitx()
+        .args(["run", "--repo", "app", "--with-deps"])
+        .assert()
+        .code(1);
+    let lines = jsonl(&assert.get_output().stdout);
+    assert_eq!(line_for(&lines, "core")["exit_code"], 1);
+    let lib = line_for(&lines, "lib");
+    assert!(lib["exit_code"].is_null());
+    assert_eq!(lib["error"]["code"], "upstream_failed");
+    assert!(lib["error"]["message"].as_str().unwrap().contains("core"));
+    let app = line_for(&lines, "app");
+    assert_eq!(app["error"]["code"], "upstream_failed");
+    assert_eq!(summary(&lines)["failed"], 3);
+    // Nothing downstream actually ran.
+    assert_eq!(build_log(&f), Vec::<String>::new());
+}
+
+#[test]
+fn without_with_deps_staleness_changes_nothing() {
+    let f = Fixture::new();
+    chain(&f, "echo core >> ../build.log");
+    // core/lib are stale, but a plain run only executes the target (PRD §9.4).
+    let assert = f.ezgitx().args(["run", "--repo", "app"]).assert().code(0);
+    let lines = jsonl(&assert.get_output().stdout);
+    assert_eq!(summary(&lines)["total"], 1);
+    assert_eq!(build_log(&f), ["app"]);
+}
+
+#[test]
+fn explicit_cmd_applies_to_targets_not_upstreams() {
+    let f = Fixture::new();
+    chain(&f, "echo core >> ../build.log");
+    let assert = f
+        .ezgitx()
+        .args([
+            "run",
+            "--repo",
+            "app",
+            "--with-deps",
+            "echo custom >> ../build.log",
+        ])
+        .assert()
+        .code(0);
+    let lines = jsonl(&assert.get_output().stdout);
+    assert_eq!(summary(&lines)["total"], 3);
+    // Upstreams ran their default_cmd; the target ran the explicit command.
+    assert_eq!(build_log(&f), ["core", "lib", "custom"]);
+}

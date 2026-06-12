@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: test (${{ matrix.os }}, ${{ matrix.rust }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        rust: [stable, "1.85"] # 1.85 is the declared MSRV — keep in sync with Cargo.toml
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust ${{ matrix.rust }}
+        run: rustup toolchain install ${{ matrix.rust }} --profile minimal --component rustfmt,clippy && rustup default ${{ matrix.rust }}
+      - uses: Swatinem/rust-cache@v2
+      - name: Format
+        if: matrix.rust == 'stable'
+        run: cargo fmt --check
+      - name: Clippy
+        if: matrix.rust == 'stable'
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Tests
+        run: cargo test
+        env:
+          GIT_AUTHOR_NAME: ci
+          GIT_AUTHOR_EMAIL: ci@example.com
+          GIT_COMMITTER_NAME: ci
+          GIT_COMMITTER_EMAIL: ci@example.com
