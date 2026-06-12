@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use serde::Serialize;
 
 use crate::errors::{ErrorInfo, aggregate_exit};
@@ -6,6 +8,9 @@ use crate::git::{self, TreeState};
 use crate::output::Emitter;
 use crate::state;
 use crate::workspace::{Repo, Workspace};
+
+/// A repo paired with its resolved upstream `(name, path)` probes, if any.
+type PreparedRepo = (Repo, Option<Vec<(String, PathBuf)>>);
 
 #[derive(Serialize)]
 struct StatusLine {
@@ -53,40 +58,54 @@ pub async fn run(
     let mut emitter = Emitter::new(human, HEADERS);
     let mut any_failure = false;
 
-    // stale_deps needs &Workspace (not Send into tasks cheaply); compute it
-    // up front per repo — it is a few rev-parse calls at most.
-    let mut prepared: Vec<(Repo, Option<Vec<String>>)> = Vec::new();
-    for repo in repos {
-        let stale = if repo.depends_on.is_empty() {
-            None
-        } else {
-            Some(state::stale_upstreams(ws, &repo.name, max_bytes).await)
-        };
-        prepared.push((repo, stale));
-    }
+    // Spawned tasks need 'static data, so resolve each repo's upstream
+    // (name, path) pairs up front (cheap, no git); the actual staleness
+    // probes then run inside the per-repo tasks, fully concurrent.
+    let root = ws.root.clone();
+    let prepared: Vec<PreparedRepo> = repos
+        .into_iter()
+        .map(|repo| {
+            let upstreams = if repo.depends_on.is_empty() {
+                None
+            } else {
+                Some(state::with_paths(
+                    ws,
+                    crate::graph::transitive_upstreams(ws, &repo.name),
+                ))
+            };
+            (repo, upstreams)
+        })
+        .collect();
 
     run_parallel(
         prepared,
         jobs,
-        |(repo, stale_deps)| async move {
-            if let Err(e) = git::check_is_repo(&repo.path) {
-                return Outcome::Err(repo.name, e);
-            }
-            match git::status(&repo.path, max_bytes).await {
-                Ok(s) => Outcome::Ok(
-                    Box::new(StatusLine {
-                        repo: repo.name,
-                        path: repo.path.display().to_string(),
-                        branch: s.branch,
-                        head: s.head,
-                        state: s.state.as_str(),
-                        ahead: s.ahead,
-                        behind: s.behind,
-                        stale_deps,
-                    }),
-                    s.state,
-                ),
-                Err(e) => Outcome::Err(repo.name, e),
+        |(repo, upstreams)| {
+            let root = root.clone();
+            async move {
+                if let Err(e) = git::check_is_repo(&repo.path) {
+                    return Outcome::Err(repo.name, e);
+                }
+                let stale_deps = match upstreams {
+                    None => None,
+                    Some(pairs) => Some(state::filter_stale_paths(&root, pairs, max_bytes).await),
+                };
+                match git::status(&repo.path, max_bytes).await {
+                    Ok(s) => Outcome::Ok(
+                        Box::new(StatusLine {
+                            repo: repo.name,
+                            path: repo.path.display().to_string(),
+                            branch: s.branch,
+                            head: s.head,
+                            state: s.state.as_str(),
+                            ahead: s.ahead,
+                            behind: s.behind,
+                            stale_deps,
+                        }),
+                        s.state,
+                    ),
+                    Err(e) => Outcome::Err(repo.name, e),
+                }
             }
         },
         |outcome| match outcome {

@@ -95,7 +95,12 @@ fn try_acquire(path: &Path, op: &str, ttl: Duration) -> Result<LockGuard, Option
                     started_at: jiff::Timestamp::now().to_string(),
                     op: op.to_string(),
                 };
-                serde_json::to_writer(&file, &info).map_err(|_| None)?;
+                if serde_json::to_writer(&file, &info).is_err() {
+                    // Don't leave an empty/corrupt lock for others to break.
+                    drop(file);
+                    let _ = fs::remove_file(path);
+                    return Err(None);
+                }
                 return Ok(LockGuard {
                     path: path.to_path_buf(),
                 });

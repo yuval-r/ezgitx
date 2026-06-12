@@ -23,14 +23,18 @@ pub async fn run(
 
     // --with-deps expands targets with their *stale* transitive upstreams
     // (PRD §9.4); fresh upstreams are skipped. Without it, a single
-    // unordered wave — staleness never changes what executes.
+    // unordered wave — staleness never changes what executes. The union of
+    // all targets' upstreams is probed concurrently in one wave so shared
+    // dependencies are checked once.
     let waves: Vec<Vec<String>> = if with_deps {
-        let mut set = target_names.clone();
+        let mut upstreams: BTreeSet<String> = BTreeSet::new();
         for name in &target_names {
-            for upstream in state::stale_upstreams(ws, name, max_bytes).await {
-                set.insert(upstream);
-            }
+            upstreams.extend(crate::graph::transitive_upstreams(ws, name));
         }
+        // Targets always execute; only non-target upstreams need probing.
+        upstreams.retain(|u| !target_names.contains(u));
+        let mut set = target_names.clone();
+        set.extend(state::filter_stale(ws, &upstreams, max_bytes).await);
         crate::graph::topo_waves(ws, &set)
     } else {
         vec![target_names.iter().cloned().collect()]

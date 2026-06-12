@@ -179,7 +179,7 @@ impl Workspace {
 
         if !t.all && t.groups.is_empty() && t.repos.is_empty() {
             match self.current_repo(cwd) {
-                Some(repo) => push(&repo.name.clone(), &mut names),
+                Some(repo) => push(&repo.name, &mut names),
                 None => {
                     for name in self.repos.keys() {
                         push(name, &mut names);

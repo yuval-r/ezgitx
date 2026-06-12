@@ -1,9 +1,9 @@
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
 use crate::git;
-use crate::graph;
 use crate::workspace::Workspace;
 
 /// Freshness record (PRD §9.3): written after every successful `ezgitx run`
@@ -60,20 +60,32 @@ async fn check_stale(root: PathBuf, repo: String, path: PathBuf, max_bytes: usiz
     }
 }
 
-/// Transitive upstream dependencies of `repo` that are stale, sorted. Each
-/// check spawns a `git rev-parse`, so they run concurrently — sequential
-/// probing would bottleneck on deep dependency trees.
-pub async fn stale_upstreams(ws: &Workspace, repo: &str, max_bytes: usize) -> Vec<String> {
+/// Resolve repo names to `(name, path)` pairs for owned-data probing.
+/// Cheap and synchronous — do this before moving work into spawned tasks.
+pub fn with_paths(
+    ws: &Workspace,
+    names: impl IntoIterator<Item = String>,
+) -> Vec<(String, PathBuf)> {
+    names
+        .into_iter()
+        .filter_map(|n| ws.repos.get(&n).map(|r| (n, r.path.clone())))
+        .collect()
+}
+
+/// Concurrently filter `(name, path)` pairs down to the stale ones, sorted.
+/// Each check spawns a `git rev-parse`; probing them in one parallel wave
+/// avoids both sequential bottlenecks and re-probing shared dependencies.
+pub async fn filter_stale_paths(
+    root: &Path,
+    repos: Vec<(String, PathBuf)>,
+    max_bytes: usize,
+) -> Vec<String> {
     let mut set = tokio::task::JoinSet::new();
-    for upstream in graph::transitive_upstreams(ws, repo) {
-        let Some(entry) = ws.repos.get(&upstream) else {
-            continue;
-        };
-        let root = ws.root.clone();
-        let path = entry.path.clone();
+    for (name, path) in repos {
+        let root = root.to_path_buf();
         set.spawn(async move {
-            let stale = check_stale(root, upstream.clone(), path, max_bytes).await;
-            (upstream, stale)
+            let stale = check_stale(root, name.clone(), path, max_bytes).await;
+            (name, stale)
         });
     }
     let mut stale = Vec::new();
@@ -84,4 +96,13 @@ pub async fn stale_upstreams(ws: &Workspace, repo: &str, max_bytes: usize) -> Ve
     }
     stale.sort();
     stale
+}
+
+/// The stale subset of `names`, probed concurrently in a single wave.
+pub async fn filter_stale(
+    ws: &Workspace,
+    names: &BTreeSet<String>,
+    max_bytes: usize,
+) -> Vec<String> {
+    filter_stale_paths(&ws.root, with_paths(ws, names.iter().cloned()), max_bytes).await
 }
