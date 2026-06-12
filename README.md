@@ -18,7 +18,7 @@ agent (and you) one clean way to:
 - **see** the state of every repo at once — `ezgitx status`
 - **update** them all in one go — `ezgitx pull`
 - **install/build/test across all of them**, in parallel, in the right
-  order — `ezgitx run --with-deps`
+  order — `ezgitx run --all --with-deps`
 - **know what breaks what** — change a shared library, then
   `ezgitx check-impact` lists everything downstream that needs re-checking
 
@@ -42,9 +42,8 @@ agent can simply read.
 1. **Install it** (needs Rust's `cargo` and `git`):
 
    ```sh
-   cargo install ezgitx
-   # or, straight from the repo:
    cargo install --git https://github.com/yuval-r/ezgitx
+   # (cargo install ezgitx — once the crate is published to crates.io)
    ```
 
 2. **Let your agent set it up.** Open a Claude Code session in the folder
@@ -83,7 +82,8 @@ What makes it different from `mani`, `gita`, `myrepos`, or `git-xargs` is the
 ## Install
 
 ```sh
-cargo install ezgitx
+cargo install --git https://github.com/yuval-r/ezgitx
+# (cargo install ezgitx — once the crate is published to crates.io)
 ```
 
 Requires the system `git` binary. macOS and Linux; Rust 1.85+ to build.
