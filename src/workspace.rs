@@ -84,7 +84,7 @@ pub fn load(start: &Path) -> Result<Workspace, ErrorInfo> {
                         format!("repo path {:?} has no directory name", entry.path),
                     )
                 })?;
-            if let Some(existing) = repos.get(&name) {
+            if let Some(existing) = repos.get_mut(&name) {
                 if existing.path != path {
                     return Err(ErrorInfo::new(
                         ErrorCode::ConfigInvalid,
@@ -95,8 +95,36 @@ pub fn load(start: &Path) -> Result<Workspace, ErrorInfo> {
                         ),
                     ));
                 }
-                // Same repo listed in another group: membership only; the
-                // first entry's cmd/deps fields win.
+                // Same repo listed in another group: entries MERGE — fields
+                // fill in from whichever entry provides them. First-wins
+                // would resolve by group iteration order (alphabetical, not
+                // file order), silently dropping commands. Conflicting
+                // values fail loudly instead (PRD §4.1).
+                merge_field(
+                    &mut existing.default_cmd,
+                    &entry.default_cmd,
+                    "default_cmd",
+                    &name,
+                )?;
+                merge_field(
+                    &mut existing.check_cmd,
+                    &entry.check_cmd,
+                    "check_cmd",
+                    &name,
+                )?;
+                if let Some(deps) = &entry.depends_on {
+                    if existing.depends_on.is_empty() {
+                        existing.depends_on = deps.clone();
+                    } else if existing.depends_on != *deps {
+                        return Err(ErrorInfo::new(
+                            ErrorCode::ConfigInvalid,
+                            format!(
+                                "repo {name:?} has conflicting depends_on across groups: {:?} vs {deps:?}",
+                                existing.depends_on
+                            ),
+                        ));
+                    }
+                }
             } else {
                 repos.insert(
                     name.clone(),
@@ -179,6 +207,28 @@ impl Workspace {
         }
 
         Ok(names.into_iter().map(|n| self.repos[&n].clone()).collect())
+    }
+}
+
+/// Merge an optional config field from another group's entry for the same
+/// repo: absent stays, missing fills in, identical passes, conflict errors.
+fn merge_field(
+    existing: &mut Option<String>,
+    incoming: &Option<String>,
+    field: &str,
+    repo: &str,
+) -> Result<(), ErrorInfo> {
+    match (existing.as_deref(), incoming.as_deref()) {
+        (_, None) => Ok(()),
+        (None, Some(value)) => {
+            *existing = Some(value.to_string());
+            Ok(())
+        }
+        (Some(a), Some(b)) if a == b => Ok(()),
+        (Some(a), Some(b)) => Err(ErrorInfo::new(
+            ErrorCode::ConfigInvalid,
+            format!("repo {repo:?} has conflicting {field} across groups: {a:?} vs {b:?}"),
+        )),
     }
 }
 
@@ -287,6 +337,70 @@ mod tests {
         let deep = ws.root.join("a/x/y");
         std::fs::create_dir_all(&deep).unwrap();
         assert_eq!(discover_root(&deep).unwrap(), ws.root);
+    }
+
+    #[test]
+    fn multi_group_fields_merge_regardless_of_group_order() {
+        // Dogfooded bug: groups iterate in BTreeMap (alphabetical) order, so
+        // a bare membership entry in an alphabetically-earlier group ("aux")
+        // silently erased the real entry's commands under first-wins.
+        let (_d, ws) = ws_with(
+            "version: 1\n\
+             groups:\n\
+             \x20 aux:\n\
+             \x20   - path: ./sdk\n\
+             \x20 build:\n\
+             \x20   - path: ./sdk\n\
+             \x20     default_cmd: \"make\"\n\
+             \x20     check_cmd: \"make test\"\n\
+             \x20   - path: ./app\n\
+             \x20     depends_on: [\"sdk\"]\n\
+             \x20 extra:\n\
+             \x20   - path: ./app\n",
+        );
+        let sdk = &ws.repos["sdk"];
+        assert_eq!(sdk.default_cmd.as_deref(), Some("make"));
+        assert_eq!(sdk.check_cmd.as_deref(), Some("make test"));
+        assert_eq!(ws.repos["app"].depends_on, ["sdk"]);
+    }
+
+    #[test]
+    fn conflicting_fields_across_groups_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join(CONFIG_FILE),
+            "version: 1\n\
+             groups:\n\
+             \x20 g1:\n\
+             \x20   - path: ./a\n\
+             \x20     default_cmd: \"make\"\n\
+             \x20 g2:\n\
+             \x20   - path: ./a\n\
+             \x20     default_cmd: \"cargo build\"\n",
+        )
+        .unwrap();
+        let err = load(dir.path()).unwrap_err();
+        assert_eq!(err.code, ErrorCode::ConfigInvalid);
+        assert!(
+            err.message.contains("default_cmd"),
+            "message: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn identical_duplicate_fields_are_fine() {
+        let (_d, ws) = ws_with(
+            "version: 1\n\
+             groups:\n\
+             \x20 g1:\n\
+             \x20   - path: ./a\n\
+             \x20     default_cmd: \"make\"\n\
+             \x20 g2:\n\
+             \x20   - path: ./a\n\
+             \x20     default_cmd: \"make\"\n",
+        );
+        assert_eq!(ws.repos["a"].default_cmd.as_deref(), Some("make"));
     }
 
     #[test]
