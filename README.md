@@ -1,140 +1,151 @@
 # ezgitx
 
+[![crates.io](https://img.shields.io/crates/v/ezgitx.svg)](https://crates.io/crates/ezgitx)
+[![CI](https://github.com/yuval-r/ezgitx/actions/workflows/ci.yml/badge.svg)](https://github.com/yuval-r/ezgitx/actions/workflows/ci.yml)
+[![license](https://img.shields.io/crates/l/ezgitx.svg)](#license)
+
 **An agent-native multi-repo git CLI.** Read state, pull updates, and run
-commands across many sibling git repositories concurrently — with output
-designed for AI coding agents, not humans.
+commands across many sibling git repositories at once, with output designed
+for AI coding agents rather than humans.
 
-## What is this, in plain words?
+## What is this?
 
-If your work lives in several project folders side by side — say a frontend,
-a backend, and a shared library, each its own git repo — you've probably
-watched your AI coding agent struggle with that. It pulls repos one at a
-time, builds things in the wrong order, and has no idea that the change it
-just made to your shared library breaks the app sitting right next to it.
+Say your work lives in a few project folders side by side: a frontend, a
+backend, a shared library. Each one is its own git repo. AI coding agents
+handle that layout badly. They pull repos one at a time and build things in
+the wrong order. Worse, they don't notice that the change they just made to
+the shared library breaks the app sitting right next to it.
 
-ezgitx is a small command-line tool that fixes exactly that. It gives your
-agent (and you) one clean way to:
+ezgitx is a small command-line tool that fixes this. It gives your agent
+(and you) one way to:
 
-- **see** the state of every repo at once — `ezgitx status`
-- **update** them all in one go — `ezgitx pull`
-- **install/build/test across all of them**, in parallel, in the right
-  order — `ezgitx run --all --with-deps`
-- **know what breaks what** — change a shared library, then
+- see the state of every repo at once (`ezgitx status`)
+- update them all in one go (`ezgitx pull`)
+- build or test everything in parallel, in dependency order
+  (`ezgitx run --all --with-deps`)
+- find out what breaks what: change a shared library and
   `ezgitx check-impact` lists everything downstream that needs re-checking
 
-And it's built *for* agents: it never stops to ask questions, its output is
-machine-readable, and it can install its own instructions into your
-workspace (`ezgitx init-skill`) so agents like Claude Code discover and use
-it on their own — you never have to explain it to them.
+It never stops to ask questions, its output is machine readable, and it can
+install its own instructions into your workspace (`ezgitx init-skill`) so
+agents like Claude Code find it and use it without being told.
 
 ### The problem it solves
 
-AI agents are great inside one repo. The moment your work spans several
-sibling repos, they go blind: they can't tell which repos changed upstream,
-which builds are stale, or what depends on what. You end up burning time and
-tokens watching the agent rediscover your workspace every session — or
-debugging a failure that was really just a stale build of a sibling repo it
-didn't know about. ezgitx turns your workspace's structure into something an
-agent can simply read.
+Agents are fine inside one repo. Across several sibling repos they go blind.
+They can't tell which repos changed upstream, which builds are stale, or
+what depends on what. So you burn time (and tokens) watching the agent
+rediscover your workspace every session. Or you debug a failure that turns
+out to be nothing more than a stale build of a repo the agent didn't know
+mattered. ezgitx turns the structure of your workspace into something an
+agent can just read.
 
 ### Get started in two minutes
 
-1. **Install it** (needs Rust's `cargo` and `git`):
+1. Install it (no Rust toolchain needed):
 
    ```sh
-   cargo install --git https://github.com/yuval-r/ezgitx
-   # (cargo install ezgitx — once the crate is published to crates.io)
+   curl -LsSf https://github.com/yuval-r/ezgitx/releases/latest/download/ezgitx-installer.sh | sh
    ```
 
-2. **Let your agent set it up.** Open a Claude Code session in the folder
-   that *contains* your repos and paste the prompt from
+   Or, if you have cargo: `cargo install ezgitx`
+
+2. Let your agent set it up. Open a Claude Code session in the folder that
+   *contains* your repos and paste the prompt from
    [Quick start](#quick-start-let-your-coding-agent-generate-the-config)
    below. The agent writes the config, detects the dependencies between your
    repos, and installs its own instructions.
 
-3. **Talk naturally from then on.** In any session in that workspace:
-   *"pull everything"*, *"build the workspace"*, *"I changed the shared
-   lib — what do I need to re-test?"* — the agent reaches for ezgitx on its
-   own.
+3. From then on, just talk: "pull everything", "build the workspace", "I
+   changed the shared lib, what do I need to re-test?". The agent reaches
+   for ezgitx on its own.
 
 ---
 
-What makes it different from `mani`, `gita`, `myrepos`, or `git-xargs` is the
-**agent I/O contract**:
+What makes it different from `mani`, `gita`, `myrepos`, or `git-xargs` is
+the agent I/O contract:
 
-- **JSONL on stdout by default** — one JSON object per repo, streamed as each
-  repo completes. `--human` opts into tables; there is no format-flag zoo.
-- **Zero interactivity** — never prompts (`GIT_TERMINAL_PROMPT=0` on every
+- JSONL on stdout by default: one JSON object per repo, streamed as each
+  repo completes. `--human` opts into tables. There is no format-flag zoo.
+- Zero interactivity. It never prompts (`GIT_TERMINAL_PROMPT=0` on every
   child git process); anything that would need input fails instantly with a
   structured error.
-- **Deterministic truncation** — every free-text field is byte-capped
-  (default 2 KB) with a `"truncated": true` marker and a `--max-bytes`
-  override. No token-budget heuristics.
-- **Stable contracts** — fixed error-code enum, fixed exit codes
-  (0 ok / 1 repo failure / 2 usage or config / 3 lock contention). The output
-  *is* the API: breaking a schema is a major version.
-- **Cross-repo dependency awareness** — a declared dependency DAG, commit-hash
-  freshness tracking, `run --with-deps`, and `check-impact` eliminate agent
-  blindness to upstream changes.
-- **Self-installing agent instructions** — `ezgitx init-skill` generates a
+- Deterministic truncation. Every free-text field is byte-capped (default
+  2 KB) with a `"truncated": true` marker and a `--max-bytes` override. No
+  token-budget heuristics.
+- Stable contracts: a fixed error-code enum and fixed exit codes
+  (0 ok / 1 repo failure / 2 usage or config / 3 lock contention). The
+  output is the API; breaking a schema means a major version.
+- Cross-repo dependency awareness: a declared dependency DAG, commit-hash
+  freshness tracking, `run --with-deps`, and `check-impact`, so agents
+  aren't blind to upstream changes.
+- Self-installing agent instructions: `ezgitx init-skill` generates a
   Claude Code skill that teaches agents the contract.
 
 ## Install
 
+Prebuilt binaries (macOS and Linux, both architectures), no Rust needed:
+
 ```sh
-cargo install --git https://github.com/yuval-r/ezgitx
-# (cargo install ezgitx — once the crate is published to crates.io)
+curl -LsSf https://github.com/yuval-r/ezgitx/releases/latest/download/ezgitx-installer.sh | sh
 ```
 
-Requires the system `git` binary. macOS and Linux; Rust 1.85+ to build.
+With cargo:
+
+```sh
+cargo install ezgitx
+# or build the latest main:
+cargo install --git https://github.com/yuval-r/ezgitx
+```
+
+Requires the system `git` binary. macOS and Linux; Rust 1.85+ to build from
+source.
 
 ## Setup
 
 ### Quick start: let your coding agent generate the config
 
-The fastest way to adopt ezgitx — including dependency detection — is to let
-a coding agent build `.ezgitx.yml` for you. Start a Claude Code (or similar)
-session **at your workspace root** (the directory containing your repos) and
-paste:
+The quickest way to set this up is to let a coding agent write `.ezgitx.yml`
+for you, dependencies included. Start a Claude Code (or similar) session
+**at your workspace root** (the directory containing your repos) and paste:
 
 ```text
 I'm adopting ezgitx (an agent-native multi-repo CLI) in this workspace.
 Generate .ezgitx.yml at the workspace root. Work evidence-first:
 
-1. SURVEY — every direct subdirectory that is a git repository is a candidate
+1. SURVEY: every direct subdirectory that is a git repository is a candidate
    repo; its directory name becomes its ezgitx name.
-2. COMMANDS — read each repo's real build manifests (package.json scripts,
+2. COMMANDS: read each repo's real build manifests (package.json scripts,
    Cargo.toml, pyproject.toml, Makefile, go.mod) and derive:
    - default_cmd: the real install+build command. Check the lockfile to pick
      the right tool (npm vs pnpm vs bun vs yarn). Don't invent script names.
    - check_cmd: the fastest meaningful verification (typecheck, lint, or a
      quick test target) if one exists; omit the key otherwise.
-3. GROUPS — group repos the way I'd target them together (toolchain or
+3. GROUPS: group repos the way I'd target them together (toolchain or
    domain). Groups may overlap; entries for the same repo merge, but
    conflicting field values are a config error, so define commands once.
-4. DEPENDENCIES — declare depends_on ONLY where you find concrete evidence
+4. DEPENDENCIES: declare depends_on ONLY where you find concrete evidence
    that one repo consumes another FROM THIS WORKSPACE (path dependencies,
    workspace references, file:/link: specifiers, cross-repo relative
-   imports) — not merely a shared dependency from a public registry. List
+   imports), not merely a shared dependency from a public registry. List
    the edges you considered but rejected so I can promote any I want
    tracked anyway. The graph must be a DAG.
-5. SCHEMA — top level is `version: 1` (integer) plus `groups:`, a mapping
+5. SCHEMA: top level is `version: 1` (integer) plus `groups:`, a mapping
    of group name to a LIST of repo entries. Per-repo keys are exactly:
    path (string, required, relative to the workspace root), default_cmd
    (string, optional), check_cmd (string, optional), depends_on (list of
-   strings — repo directory names — optional). Unknown keys are rejected
+   strings, repo directory names, optional). Unknown keys are rejected
    at load.
-6. VALIDATE — run `ezgitx status` (config errors and dependency cycles fail
+6. VALIDATE: run `ezgitx status` (config errors and dependency cycles fail
    loudly with exit 2), then `ezgitx run --all "git rev-parse --short HEAD"`
    as a cheap dry-run proving every repo resolves. Then run
    `ezgitx init-skill`.
-7. REPORT — show me the final config with one line of justification per
+7. REPORT: show me the final config with one line of justification per
    command and per dependency edge.
 ```
 
-The agent surveys the repos, derives real build commands from the manifests,
-detects workspace-local dependency edges, validates the result against the
-binary, and installs the agent-facing skill — one paste, done.
+One paste. The agent does the survey, writes the config, validates it
+against the binary, and installs the skill.
 
 ### Manual setup
 
