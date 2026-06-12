@@ -6,7 +6,7 @@ ezgitx runs commands across the git repositories in your workspace. Two inputs
 decide what runs, and **both are trusted to the same degree as a shell script
 you wrote yourself**:
 
-- **`.ezgitx.yml`** — its `default_cmd` and `check_cmd` fields are executed
+- **`.ezgitx.yml`**: its `default_cmd` and `check_cmd` fields are executed
   verbatim through your shell when you run `ezgitx run` or
   `ezgitx check-impact --check`. A config can also point a repo `path` outside
   the workspace root (e.g. `../sibling` or an absolute path), in which case
