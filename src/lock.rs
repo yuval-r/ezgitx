@@ -53,8 +53,13 @@ fn is_stale(info: Option<&LockInfo>, ttl: Duration) -> bool {
         return true; // unparseable lock file
     };
     if info.hostname == hostname() {
-        let alive = unsafe { libc::kill(info.pid as libc::pid_t, 0) } == 0
-            || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM);
+        // Lock content is external input: a huge u32 pid would wrap negative,
+        // and kill(-1, 0) / kill(0, 0) probe process *groups*, reporting a
+        // garbage lock as held. Non-positive pids cannot be a live holder.
+        let pid = info.pid as libc::pid_t;
+        let alive = pid > 0
+            && (unsafe { libc::kill(pid, 0) } == 0
+                || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM));
         if !alive {
             return true;
         }

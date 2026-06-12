@@ -194,14 +194,22 @@ impl Workspace {
 }
 
 /// Lexically resolve `.` and `..` without touching the filesystem (the paths
-/// may not exist yet — validation is lazy, per PRD §4.1).
+/// may not exist yet — validation is lazy, per PRD §4.1). Leading `..`
+/// components of relative paths are preserved rather than silently dropped.
 fn normalize(path: &Path) -> PathBuf {
     let mut out = PathBuf::new();
     for comp in path.components() {
         match comp {
             std::path::Component::CurDir => {}
             std::path::Component::ParentDir => {
-                out.pop();
+                if matches!(
+                    out.components().next_back(),
+                    None | Some(std::path::Component::ParentDir)
+                ) {
+                    out.push(comp);
+                } else {
+                    out.pop();
+                }
             }
             other => out.push(other),
         }
@@ -290,6 +298,18 @@ mod tests {
         let deep = ws.root.join("a/x/y");
         std::fs::create_dir_all(&deep).unwrap();
         assert_eq!(discover_root(&deep).unwrap(), ws.root);
+    }
+
+    #[test]
+    fn normalize_preserves_leading_parent_dirs() {
+        use std::path::Path;
+        assert_eq!(normalize(Path::new("a/../../b")), Path::new("../b"));
+        assert_eq!(normalize(Path::new("../../x")), Path::new("../../x"));
+        assert_eq!(normalize(Path::new("/a/../../b")), Path::new("/b"));
+        assert_eq!(
+            normalize(Path::new("/w/./repo/../other")),
+            Path::new("/w/other")
+        );
     }
 
     #[test]

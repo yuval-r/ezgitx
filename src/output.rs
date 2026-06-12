@@ -67,6 +67,7 @@ impl Emitter {
                 cells
                     .iter()
                     .enumerate()
+                    .take(cols)
                     .map(|(i, c)| format!("{:<width$}", c, width = widths[i]))
                     .collect::<Vec<_>>()
                     .join("  ")
