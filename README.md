@@ -62,10 +62,12 @@ Generate .ezgitx.yml at the workspace root. Work evidence-first:
    imports) — not merely a shared dependency from a public registry. List
    the edges you considered but rejected so I can promote any I want
    tracked anyway. The graph must be a DAG.
-5. SCHEMA — top level is `version: 1` plus `groups:`, a mapping of group
-   name to a LIST of repo entries; per-repo keys are exactly path,
-   default_cmd, check_cmd, depends_on (path is required, relative to the
-   workspace root); unknown keys are rejected at load.
+5. SCHEMA — top level is `version: 1` (integer) plus `groups:`, a mapping
+   of group name to a LIST of repo entries. Per-repo keys are exactly:
+   path (string, required, relative to the workspace root), default_cmd
+   (string, optional), check_cmd (string, optional), depends_on (list of
+   strings — repo directory names — optional). Unknown keys are rejected
+   at load.
 6. VALIDATE — run `ezgitx status` (config errors and dependency cycles fail
    loudly with exit 2), then `ezgitx run --all "git rev-parse --short HEAD"`
    as a cheap dry-run proving every repo resolves. Then run
