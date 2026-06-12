@@ -240,6 +240,8 @@ File/path-level impact granularity, artifact caching, and remote build orchestra
 * Compact/summary output modes if real agent payloads prove too large despite byte caps.
 * MCP server mode, if shell invocation proves limiting.
 * Path-scoped `depends_on` filters (only treat upstream as stale if specific paths changed) — only if repo-level granularity proves too noisy in practice.
+* Windows support — the lock liveness check (§7) and shell invocation (§5.3) are unix-shaped and need platform-specific paths.
+* `init-skill` output formats beyond Claude Code (`AGENTS.md`, Cursor rules) — generalize agent self-discovery to other harnesses.
 
 ## 11. Effort & Risk Assessment
 
@@ -249,3 +251,13 @@ File/path-level impact granularity, artifact caching, and remote build orchestra
 * **Riskiest V1 piece:** `pull` edge cases (upstream config variance, fetch failures vs merge failures) — mitigated by ff-only semantics and the explicit per-repo failure enum.
 * **Riskiest V2 piece:** freshness-record correctness under concurrent sessions — mitigated by per-repo atomic state files and the fail-safe staleness direction (§9.3).
 * **Deliberately rejected complexity:** libgit2, token-budget heuristics, global-only locking, implicit upstream auto-builds, mtime freshness, file-level impact analysis.
+
+## 12. Open Source Release
+
+* **License:** dual `MIT OR Apache-2.0` (the Rust ecosystem convention; permissive, maximally adoptable).
+* **Crate name:** `ezgitx` — verified available on crates.io (2026-06-12). Reserve it early with a `0.0.1` placeholder publish if release is more than a few weeks out.
+* **Platforms:** V1 supports macOS and Linux. Windows is explicitly out of V1 (backlog, §10): the lock liveness check and shell invocation are unix-shaped.
+* **MSRV policy:** `rust-version = "1.85"` (the edition-2024 floor) declared in `Cargo.toml` and **verified in CI** with a pinned-toolchain job — a declared-but-untested MSRV is worse than none. MSRV bumps are allowed in minor releases and documented in the changelog.
+* **CI (GitHub Actions):** macOS + Linux matrix on stable and MSRV; `cargo fmt --check`, `cargo clippy -- -D warnings`, full test suite including integration tests against temp git repos.
+* **Distribution:** crates.io (`cargo install ezgitx`) plus prebuilt binaries on GitHub Releases (via `cargo-dist`). Homebrew tap if adoption warrants.
+* **Semver scope:** for an agent-native tool, **the output is the API**. The JSONL schemas, error-code enum, and exit-code contract (§6) are public interface — breaking any of them requires a major version. New fields and new error codes are additive (minor); agents must tolerate unknown fields.
