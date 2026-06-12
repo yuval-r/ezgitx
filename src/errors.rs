@@ -18,6 +18,26 @@ pub enum ErrorCode {
     UpstreamFailed,
 }
 
+impl ErrorCode {
+    /// The wire name of this code, for human-readable rendering. Must match
+    /// the serde snake_case serialization (enforced by test).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ErrorCode::DirtyTree => "dirty_tree",
+            ErrorCode::Diverged => "diverged",
+            ErrorCode::Detached => "detached",
+            ErrorCode::LockHeld => "lock_held",
+            ErrorCode::NotARepo => "not_a_repo",
+            ErrorCode::NoDefaultCmd => "no_default_cmd",
+            ErrorCode::GitFailed => "git_failed",
+            ErrorCode::SpawnFailed => "spawn_failed",
+            ErrorCode::ConfigInvalid => "config_invalid",
+            ErrorCode::DependencyCycle => "dependency_cycle",
+            ErrorCode::UpstreamFailed => "upstream_failed",
+        }
+    }
+}
+
 #[derive(Serialize, Clone, Debug)]
 pub struct ErrorInfo {
     pub code: ErrorCode,
@@ -71,5 +91,31 @@ pub fn print_top_level(err: &ErrorInfo) {
     struct Line<'a> {
         error: &'a ErrorInfo,
     }
-    println!("{}", serde_json::to_string(&Line { error: err }).unwrap());
+    crate::output::print_json_line(&Line { error: err });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn as_str_matches_serde_wire_names() {
+        const ALL: [ErrorCode; 11] = [
+            ErrorCode::DirtyTree,
+            ErrorCode::Diverged,
+            ErrorCode::Detached,
+            ErrorCode::LockHeld,
+            ErrorCode::NotARepo,
+            ErrorCode::NoDefaultCmd,
+            ErrorCode::GitFailed,
+            ErrorCode::SpawnFailed,
+            ErrorCode::ConfigInvalid,
+            ErrorCode::DependencyCycle,
+            ErrorCode::UpstreamFailed,
+        ];
+        for code in ALL {
+            let wire = serde_json::to_value(code).unwrap();
+            assert_eq!(wire.as_str(), Some(code.as_str()), "drift for {code:?}");
+        }
+    }
 }

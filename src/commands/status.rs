@@ -110,12 +110,11 @@ pub async fn run(
             }
             Outcome::Err(repo, error) => {
                 any_failure = true;
-                let code = serde_json::to_value(error.code).unwrap();
                 let row = vec![
                     repo.clone(),
                     "-".into(),
                     "-".into(),
-                    format!("error: {}", code.as_str().unwrap()),
+                    format!("error: {}", error.code.as_str()),
                     "-".into(),
                     "-".into(),
                     "-".into(),

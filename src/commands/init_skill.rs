@@ -31,7 +31,7 @@ pub fn run(ws: &Workspace, human: bool) -> i32 {
     if human {
         println!("wrote {}", line.path);
     } else {
-        println!("{}", serde_json::to_string(&line).unwrap());
+        crate::output::print_json_line(&line);
     }
     EXIT_OK
 }

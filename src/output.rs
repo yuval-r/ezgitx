@@ -13,6 +13,16 @@ pub fn cap_tail(bytes: &[u8], max: usize) -> (String, bool) {
     }
 }
 
+/// Print one JSONL line, never panicking: stdout is the agent-facing API, so
+/// a serialization failure (impossible for our plain structs, but cheap to
+/// guard) degrades to a stderr notice instead of killing remaining results.
+pub fn print_json_line<T: Serialize>(value: &T) {
+    match serde_json::to_string(value) {
+        Ok(json) => println!("{json}"),
+        Err(e) => eprintln!("ezgitx: failed to serialize output line: {e}"),
+    }
+}
+
 /// Streams JSONL to stdout, or buffers rows for an aligned table in `--human`
 /// mode. JSONL lines are emitted the moment a repo completes; human tables
 /// need all rows for column widths, so they print on `finish`.
@@ -38,7 +48,7 @@ impl Emitter {
         if self.human {
             self.rows.push(row);
         } else {
-            println!("{}", serde_json::to_string(value).unwrap());
+            print_json_line(value);
         }
     }
 
@@ -47,7 +57,7 @@ impl Emitter {
         if self.human {
             self.footers.push(human_text);
         } else {
-            println!("{}", serde_json::to_string(value).unwrap());
+            print_json_line(value);
         }
     }
 

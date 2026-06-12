@@ -76,11 +76,7 @@ impl RunLine {
 
     pub fn human_row(&self) -> Vec<String> {
         let status = match (&self.error, self.exit_code) {
-            (Some(e), _) => serde_json::to_value(e.code)
-                .unwrap()
-                .as_str()
-                .unwrap()
-                .to_string(),
+            (Some(e), _) => e.code.as_str().to_string(),
             (None, Some(0)) => "ok".to_string(),
             (None, Some(code)) => format!("exit {code}"),
             (None, None) => "?".to_string(),
