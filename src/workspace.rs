@@ -67,7 +67,16 @@ pub fn load(start: &Path) -> Result<Workspace, ErrorInfo> {
         )
     })?;
 
-    let mut repos: BTreeMap<String, Repo> = BTreeMap::new();
+    // Merged at the Option level so "not specified" stays distinct from
+    // explicit values (e.g. `depends_on: []`) until every group is seen —
+    // collapsing early makes conflict detection depend on group order.
+    struct Pending {
+        path: PathBuf,
+        default_cmd: Option<String>,
+        check_cmd: Option<String>,
+        depends_on: Option<Vec<String>>,
+    }
+    let mut pending: BTreeMap<String, Pending> = BTreeMap::new();
     let mut groups: BTreeMap<String, Vec<String>> = BTreeMap::new();
 
     for (group_name, entries) in &cfg.groups {
@@ -84,7 +93,7 @@ pub fn load(start: &Path) -> Result<Workspace, ErrorInfo> {
                         format!("repo path {:?} has no directory name", entry.path),
                     )
                 })?;
-            if let Some(existing) = repos.get_mut(&name) {
+            if let Some(existing) = pending.get_mut(&name) {
                 if existing.path != path {
                     return Err(ErrorInfo::new(
                         ErrorCode::ConfigInvalid,
@@ -112,28 +121,20 @@ pub fn load(start: &Path) -> Result<Workspace, ErrorInfo> {
                     "check_cmd",
                     &name,
                 )?;
-                if let Some(deps) = &entry.depends_on {
-                    if existing.depends_on.is_empty() {
-                        existing.depends_on = deps.clone();
-                    } else if existing.depends_on != *deps {
-                        return Err(ErrorInfo::new(
-                            ErrorCode::ConfigInvalid,
-                            format!(
-                                "repo {name:?} has conflicting depends_on across groups: {:?} vs {deps:?}",
-                                existing.depends_on
-                            ),
-                        ));
-                    }
-                }
+                merge_field(
+                    &mut existing.depends_on,
+                    &entry.depends_on,
+                    "depends_on",
+                    &name,
+                )?;
             } else {
-                repos.insert(
+                pending.insert(
                     name.clone(),
-                    Repo {
-                        name: name.clone(),
+                    Pending {
                         path,
                         default_cmd: entry.default_cmd.clone(),
                         check_cmd: entry.check_cmd.clone(),
-                        depends_on: entry.depends_on.clone().unwrap_or_default(),
+                        depends_on: entry.depends_on.clone(),
                     },
                 );
             }
@@ -142,6 +143,22 @@ pub fn load(start: &Path) -> Result<Workspace, ErrorInfo> {
             }
         }
     }
+
+    let repos: BTreeMap<String, Repo> = pending
+        .into_iter()
+        .map(|(name, p)| {
+            (
+                name.clone(),
+                Repo {
+                    name,
+                    path: p.path,
+                    default_cmd: p.default_cmd,
+                    check_cmd: p.check_cmd,
+                    depends_on: p.depends_on.unwrap_or_default(),
+                },
+            )
+        })
+        .collect();
 
     for repo in repos.values() {
         for dep in &repo.depends_on {
@@ -212,16 +229,16 @@ impl Workspace {
 
 /// Merge an optional config field from another group's entry for the same
 /// repo: absent stays, missing fills in, identical passes, conflict errors.
-fn merge_field(
-    existing: &mut Option<String>,
-    incoming: &Option<String>,
+fn merge_field<T: PartialEq + Clone + std::fmt::Debug>(
+    existing: &mut Option<T>,
+    incoming: &Option<T>,
     field: &str,
     repo: &str,
 ) -> Result<(), ErrorInfo> {
-    match (existing.as_deref(), incoming.as_deref()) {
+    match (existing.as_ref(), incoming.as_ref()) {
         (_, None) => Ok(()),
         (None, Some(value)) => {
-            *existing = Some(value.to_string());
+            *existing = Some(value.clone());
             Ok(())
         }
         (Some(a), Some(b)) if a == b => Ok(()),
@@ -386,6 +403,43 @@ mod tests {
             "message: {}",
             err.message
         );
+    }
+
+    #[test]
+    fn explicit_empty_depends_on_conflicts_symmetrically() {
+        // depends_on: [] is an explicit declaration, not absence. It must
+        // conflict with a non-empty list in BOTH group orders — merging
+        // silently in one order and erroring in the other is the same
+        // order-dependence this change exists to remove.
+        for (first_group, second_group) in [("aaa", "zzz"), ("zzz", "aaa")] {
+            let dir = tempfile::tempdir().unwrap();
+            std::fs::write(
+                dir.path().join(CONFIG_FILE),
+                format!(
+                    "version: 1\n\
+                     groups:\n\
+                     \x20 {first_group}:\n\
+                     \x20   - path: ./a\n\
+                     \x20     depends_on: []\n\
+                     \x20   - path: ./sdk\n\
+                     \x20 {second_group}:\n\
+                     \x20   - path: ./a\n\
+                     \x20     depends_on: [\"sdk\"]\n"
+                ),
+            )
+            .unwrap();
+            let err = load(dir.path()).unwrap_err();
+            assert_eq!(
+                err.code,
+                ErrorCode::ConfigInvalid,
+                "groups {first_group}/{second_group} must conflict"
+            );
+            assert!(
+                err.message.contains("depends_on"),
+                "message: {}",
+                err.message
+            );
+        }
     }
 
     #[test]
