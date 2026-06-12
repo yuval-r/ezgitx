@@ -100,9 +100,10 @@ fn try_acquire(path: &Path, op: &str, ttl: Duration) -> Result<LockGuard, Option
         return Err(None);
     };
     let tmp = dir.join(format!(
-        ".{}.{}.tmp",
+        ".{}.{}.{}.tmp",
         path.file_name().unwrap_or_default().to_string_lossy(),
-        std::process::id()
+        std::process::id(),
+        crate::state::unique_suffix()
     ));
     if fs::write(&tmp, payload).is_err() {
         let _ = fs::remove_file(&tmp);

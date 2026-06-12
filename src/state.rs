@@ -26,12 +26,25 @@ pub fn read(root: &Path, repo: &str) -> Option<Record> {
     serde_json::from_str(&text).ok()
 }
 
-/// Atomic write: tmp file (pid-suffixed against concurrent sessions) + rename.
+/// Monotonic in-process discriminator for staging-file names. The pid keeps
+/// concurrent *sessions* apart; this keeps concurrent *tasks* in one process
+/// apart, so the uniqueness invariant doesn't rest on call-pattern luck.
+pub fn unique_suffix() -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    COUNTER.fetch_add(1, Ordering::Relaxed)
+}
+
+/// Atomic write: pid+counter-suffixed tmp file + rename.
 pub fn write(root: &Path, repo: &str, record: &Record) -> std::io::Result<()> {
     let path = state_path(root, repo);
     let dir = path.parent().unwrap();
     std::fs::create_dir_all(dir)?;
-    let tmp = dir.join(format!(".{repo}.{}.tmp", std::process::id()));
+    let tmp = dir.join(format!(
+        ".{repo}.{}.{}.tmp",
+        std::process::id(),
+        unique_suffix()
+    ));
     std::fs::write(&tmp, serde_json::to_vec(record)?)?;
     std::fs::rename(&tmp, &path).inspect_err(|_| {
         let _ = std::fs::remove_file(&tmp);
