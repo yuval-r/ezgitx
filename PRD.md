@@ -170,7 +170,7 @@ Multiple agent sessions mutate the workspace concurrently; locks prevent conflic
 
 ## 8. Technical Stack
 
-* Rust 2021 edition
+* Rust 2024 edition (MSRV 1.85; toolchain on the dev machine is 1.96)
 * `clap` (derive) — CLI parsing
 * `tokio` + `tokio::process` — bounded-parallel child processes, streamed output
 * `serde` / `serde_json` / `serde_yaml` — config and JSONL
