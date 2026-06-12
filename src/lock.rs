@@ -65,13 +65,13 @@ fn is_stale(info: Option<&LockInfo>, ttl: Duration) -> bool {
         }
     }
     match info.started_at.parse::<jiff::Timestamp>() {
-        Ok(started) => {
-            let age = jiff::Timestamp::now().since(started).ok();
-            match age {
-                Some(span) => span.get_seconds() as u64 > ttl.as_secs(),
-                None => true,
-            }
-        }
+        Ok(started) => match jiff::Timestamp::now().since(started) {
+            // A negative age means started_at is in the future — cross-host
+            // clock skew, not expiry. Comparing in i64 keeps it "fresh";
+            // casting to u64 would wrap it huge and break a live lock.
+            Ok(span) => span.get_seconds() > ttl.as_secs() as i64,
+            Err(_) => true,
+        },
         Err(_) => true,
     }
 }
@@ -106,9 +106,14 @@ fn try_acquire(path: &Path, op: &str, ttl: Duration) -> Result<LockGuard, Option
                 });
             }
             Err(e) if e.kind() == ErrorKind::AlreadyExists => {
-                let holder: Option<LockInfo> = fs::read_to_string(path)
-                    .ok()
-                    .and_then(|s| serde_json::from_str(&s).ok());
+                let content = match fs::read_to_string(path) {
+                    Ok(s) => s,
+                    // Holder released between create_new and the read:
+                    // retry immediately, no false "stale lock" notice.
+                    Err(e) if e.kind() == ErrorKind::NotFound => continue,
+                    Err(_) => String::new(), // unreadable → stale path below
+                };
+                let holder: Option<LockInfo> = serde_json::from_str(&content).ok();
                 if is_stale(holder.as_ref(), ttl) {
                     eprintln!("ezgitx: breaking stale lock {}", path.display());
                     let _ = fs::remove_file(path);
@@ -160,12 +165,13 @@ pub async fn acquire(
 /// without taking it. Returns the `lock_held` error when a live holder exists.
 pub fn check_workspace_lock(root: &Path) -> Result<(), ErrorInfo> {
     let path = workspace_lock_path(root);
-    if !path.exists() {
-        return Ok(());
-    }
-    let holder: Option<LockInfo> = fs::read_to_string(&path)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok());
+    let content = match fs::read_to_string(&path) {
+        Ok(s) => s,
+        // Absent (or released mid-check) means no holder — not a stale lock.
+        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(()),
+        Err(_) => String::new(), // unreadable → stale path below
+    };
+    let holder: Option<LockInfo> = serde_json::from_str(&content).ok();
     if is_stale(holder.as_ref(), DEFAULT_TTL) {
         eprintln!("ezgitx: breaking stale lock {}", path.display());
         let _ = fs::remove_file(&path);
@@ -228,6 +234,26 @@ mod tests {
         };
         fs::write(&path, serde_json::to_string(&stale).unwrap()).unwrap();
         assert!(acquire(&path, "pull", None).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn future_dated_lock_is_not_stale() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = repo_lock_path(dir.path(), "a");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        // Another host whose clock runs ahead of ours: started_at is in the
+        // future. Only the TTL applies (foreign hostname skips the PID
+        // check), and a negative age must read as fresh, not expired.
+        let skewed = jiff::Timestamp::now() + jiff::ToSpan::seconds(120);
+        let holder = LockInfo {
+            pid: 12345,
+            hostname: "elsewhere".to_string(),
+            started_at: skewed.to_string(),
+            op: "pull".to_string(),
+        };
+        fs::write(&path, serde_json::to_string(&holder).unwrap()).unwrap();
+        let err = acquire(&path, "pull", None).await.unwrap_err();
+        assert_eq!(err.code, ErrorCode::LockHeld);
     }
 
     #[tokio::test]
