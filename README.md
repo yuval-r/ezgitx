@@ -1,5 +1,9 @@
 # ezgitx
 
+[![crates.io](https://img.shields.io/crates/v/ezgitx.svg)](https://crates.io/crates/ezgitx)
+[![CI](https://github.com/yuval-r/ezgitx/actions/workflows/ci.yml/badge.svg)](https://github.com/yuval-r/ezgitx/actions/workflows/ci.yml)
+[![license](https://img.shields.io/crates/l/ezgitx.svg)](#license)
+
 **An agent-native multi-repo git CLI.** Read state, pull updates, and run
 commands across many sibling git repositories at once, with output designed
 for AI coding agents rather than humans.
