@@ -38,11 +38,13 @@ agent can just read.
 
 ### Get started in two minutes
 
-1. Install it:
+1. Install it (no Rust toolchain needed):
 
    ```sh
-   cargo install ezgitx
+   curl -LsSf https://github.com/yuval-r/ezgitx/releases/latest/download/ezgitx-installer.sh | sh
    ```
+
+   Or, if you have cargo: `cargo install ezgitx`
 
 2. Let your agent set it up. Open a Claude Code session in the folder that
    *contains* your repos and paste the prompt from
@@ -78,13 +80,22 @@ the agent I/O contract:
 
 ## Install
 
+Prebuilt binaries (macOS and Linux, both architectures), no Rust needed:
+
+```sh
+curl -LsSf https://github.com/yuval-r/ezgitx/releases/latest/download/ezgitx-installer.sh | sh
+```
+
+With cargo:
+
 ```sh
 cargo install ezgitx
 # or build the latest main:
 cargo install --git https://github.com/yuval-r/ezgitx
 ```
 
-Requires the system `git` binary. macOS and Linux; Rust 1.85+ to build.
+Requires the system `git` binary. macOS and Linux; Rust 1.85+ to build from
+source.
 
 ## Setup
 
