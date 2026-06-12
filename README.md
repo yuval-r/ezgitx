@@ -34,6 +34,54 @@ Requires the system `git` binary. macOS and Linux; Rust 1.85+ to build.
 
 ## Setup
 
+### Quick start: let your coding agent generate the config
+
+The fastest way to adopt ezgitx — including dependency detection — is to let
+a coding agent build `.ezgitx.yml` for you. Start a Claude Code (or similar)
+session **at your workspace root** (the directory containing your repos) and
+paste:
+
+```text
+I'm adopting ezgitx (an agent-native multi-repo CLI) in this workspace.
+Generate .ezgitx.yml at the workspace root. Work evidence-first:
+
+1. SURVEY — every direct subdirectory that is a git repository is a candidate
+   repo; its directory name becomes its ezgitx name.
+2. COMMANDS — read each repo's real build manifests (package.json scripts,
+   Cargo.toml, pyproject.toml, Makefile, go.mod) and derive:
+   - default_cmd: the real install+build command. Check the lockfile to pick
+     the right tool (npm vs pnpm vs bun vs yarn). Don't invent script names.
+   - check_cmd: the fastest meaningful verification (typecheck, lint, or a
+     quick test target) if one exists; omit the key otherwise.
+3. GROUPS — group repos the way I'd target them together (toolchain or
+   domain). Groups may overlap; entries for the same repo merge, but
+   conflicting field values are a config error, so define commands once.
+4. DEPENDENCIES — declare depends_on ONLY where you find concrete evidence
+   that one repo consumes another FROM THIS WORKSPACE (path dependencies,
+   workspace references, file:/link: specifiers, cross-repo relative
+   imports) — not merely a shared dependency from a public registry. List
+   the edges you considered but rejected so I can promote any I want
+   tracked anyway. The graph must be a DAG.
+5. SCHEMA — top level is `version: 1` (integer) plus `groups:`, a mapping
+   of group name to a LIST of repo entries. Per-repo keys are exactly:
+   path (string, required, relative to the workspace root), default_cmd
+   (string, optional), check_cmd (string, optional), depends_on (list of
+   strings — repo directory names — optional). Unknown keys are rejected
+   at load.
+6. VALIDATE — run `ezgitx status` (config errors and dependency cycles fail
+   loudly with exit 2), then `ezgitx run --all "git rev-parse --short HEAD"`
+   as a cheap dry-run proving every repo resolves. Then run
+   `ezgitx init-skill`.
+7. REPORT — show me the final config with one line of justification per
+   command and per dependency edge.
+```
+
+The agent surveys the repos, derives real build commands from the manifests,
+detects workspace-local dependency edges, validates the result against the
+binary, and installs the agent-facing skill — one paste, done.
+
+### Manual setup
+
 Put `.ezgitx.yml` at your workspace root (the directory containing your
 repos):
 
