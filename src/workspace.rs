@@ -147,25 +147,17 @@ impl Workspace {
     /// inside a member. The `--dirty` filter is applied separately (it needs
     /// git calls).
     pub fn select(&self, t: &Targeting, cwd: &Path) -> Result<Vec<Repo>, ErrorInfo> {
-        let mut names: Vec<String> = Vec::new();
-        let push = |name: &str, names: &mut Vec<String>| {
-            if !names.iter().any(|n| n == name) {
-                names.push(name.to_string());
-            }
-        };
+        // BTreeSet dedupes and keeps the result deterministically sorted.
+        let mut names: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
 
         if t.all {
-            for name in self.repos.keys() {
-                push(name, &mut names);
-            }
+            names.extend(self.repos.keys().cloned());
         }
         for group in &t.groups {
             let members = self.groups.get(group).ok_or_else(|| {
                 ErrorInfo::new(ErrorCode::ConfigInvalid, format!("unknown group {group:?}"))
             })?;
-            for name in members {
-                push(name, &mut names);
-            }
+            names.extend(members.iter().cloned());
         }
         for repo in &t.repos {
             if !self.repos.contains_key(repo) {
@@ -174,21 +166,18 @@ impl Workspace {
                     format!("unknown repo {repo:?}"),
                 ));
             }
-            push(repo, &mut names);
+            names.insert(repo.clone());
         }
 
         if !t.all && t.groups.is_empty() && t.repos.is_empty() {
             match self.current_repo(cwd) {
-                Some(repo) => push(&repo.name, &mut names),
-                None => {
-                    for name in self.repos.keys() {
-                        push(name, &mut names);
-                    }
+                Some(repo) => {
+                    names.insert(repo.name.clone());
                 }
+                None => names.extend(self.repos.keys().cloned()),
             }
         }
 
-        names.sort();
         Ok(names.into_iter().map(|n| self.repos[&n].clone()).collect())
     }
 }

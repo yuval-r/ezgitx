@@ -270,6 +270,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn ttl_uses_total_elapsed_seconds() {
+        // Pins jiff semantics: Timestamp::since defaults to seconds as the
+        // largest unit, so get_seconds() is the TOTAL age (660 for 11 min),
+        // not a 0-59 component. Foreign hostname skips the PID check, so
+        // only the TTL decides: 11 min > 10 min TTL → stale; 9 min → held.
+        let dir = tempfile::tempdir().unwrap();
+        let lock_for_age = |minutes: i64| LockInfo {
+            pid: 12345,
+            hostname: "elsewhere".to_string(),
+            started_at: (jiff::Timestamp::now() - jiff::ToSpan::minutes(minutes)).to_string(),
+            op: "pull".to_string(),
+        };
+
+        let expired = repo_lock_path(dir.path(), "expired");
+        fs::create_dir_all(expired.parent().unwrap()).unwrap();
+        fs::write(&expired, serde_json::to_string(&lock_for_age(11)).unwrap()).unwrap();
+        assert!(acquire(&expired, "pull", None).await.is_ok());
+
+        let held = repo_lock_path(dir.path(), "held");
+        fs::write(&held, serde_json::to_string(&lock_for_age(9)).unwrap()).unwrap();
+        let err = acquire(&held, "pull", None).await.unwrap_err();
+        assert_eq!(err.code, ErrorCode::LockHeld);
+    }
+
+    #[tokio::test]
     async fn future_dated_lock_is_not_stale() {
         let dir = tempfile::tempdir().unwrap();
         let path = repo_lock_path(dir.path(), "a");

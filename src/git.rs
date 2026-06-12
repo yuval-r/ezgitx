@@ -4,12 +4,14 @@ use std::process::Output;
 use crate::errors::{ErrorCode, ErrorInfo};
 
 /// Spawn the system `git` binary (PRD §3.6) with interactivity disabled
-/// (PRD §3.1).
+/// (PRD §3.1). LC_ALL=C pins git's messages to English — pull classification
+/// matches against stderr text, which is otherwise localized.
 pub async fn git(dir: &Path, args: &[&str]) -> Result<Output, ErrorInfo> {
     tokio::process::Command::new("git")
         .args(args)
         .current_dir(dir)
         .env("GIT_TERMINAL_PROMPT", "0")
+        .env("LC_ALL", "C")
         .output()
         .await
         .map_err(|e| ErrorInfo::new(ErrorCode::SpawnFailed, format!("cannot spawn git: {e}")))

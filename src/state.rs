@@ -33,7 +33,9 @@ pub fn write(root: &Path, repo: &str, record: &Record) -> std::io::Result<()> {
     std::fs::create_dir_all(dir)?;
     let tmp = dir.join(format!(".{repo}.{}.tmp", std::process::id()));
     std::fs::write(&tmp, serde_json::to_vec(record)?)?;
-    std::fs::rename(&tmp, &path)
+    std::fs::rename(&tmp, &path).inspect_err(|_| {
+        let _ = std::fs::remove_file(&tmp);
+    })
 }
 
 pub fn record_success(root: &Path, repo: &str, head: String, cmd: &str) {
