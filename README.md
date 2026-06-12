@@ -110,8 +110,9 @@ for you, dependencies included. Start a Claude Code (or similar) session
 **at your workspace root** (the directory containing your repos) and paste:
 
 ```text
-I'm adopting ezgitx (an agent-native multi-repo CLI) in this workspace.
-Generate .ezgitx.yml at the workspace root. Work evidence-first:
+I'm adopting ezgitx (an agent-native multi-repo CLI,
+https://github.com/yuval-r/ezgitx) in this workspace. Generate .ezgitx.yml
+at the workspace root. Work evidence-first:
 
 1. SURVEY: every direct subdirectory that is a git repository is a candidate
    repo; its directory name becomes its ezgitx name.
@@ -215,6 +216,18 @@ error codes are additive (minor). Consumers must tolerate unknown fields.
 
 MSRV is 1.85, verified in CI; MSRV bumps are minor-version changes, noted in
 the changelog.
+
+## Why this exists
+
+I'm Yuval Roth. I'm building [EZBunny](https://ezbunny.com), AI-native
+compliance training for small healthcare practices, and its workspace is a
+pile of sibling repos that my AI coding agents kept mishandling: wrong build
+order, stale shared libraries, no idea what depended on what. ezgitx is the
+tool I built so they'd stop. It's open source because the problem clearly
+isn't mine alone.
+
+Found it useful? A star helps other people find it. I'm
+[@yuval-r](https://github.com/yuval-r) on GitHub.
 
 ## License
 
