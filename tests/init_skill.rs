@@ -24,6 +24,9 @@ fn writes_skill_file_at_workspace_root() {
     assert!(content.contains("lock_held"));
     assert!(content.contains("--with-deps"));
     assert!(content.contains("check-impact"));
+    // Config-authoring guidance: evidence-first depends_on detection.
+    assert!(content.contains("Creating or extending"));
+    assert!(content.contains("FROM THIS WORKSPACE"));
     assert!(content.starts_with("---\nname: ezgitx"));
 }
 

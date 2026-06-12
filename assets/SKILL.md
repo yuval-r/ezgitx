@@ -78,6 +78,31 @@ Target narrowly instead of scanning everything:
 - Staleness only ever errs toward redundant rebuilds, never toward stale
   artifacts being treated as fresh.
 
+## Creating or extending `.ezgitx.yml`
+
+When asked to add repos to this workspace or rebuild the config, work
+evidence-first:
+
+- Candidate repos are direct subdirectories of the workspace root that
+  contain `.git`; the directory name becomes the repo name.
+- Derive `default_cmd` from the repo's real manifests (package.json scripts,
+  Cargo.toml, pyproject.toml, Makefile, go.mod). Check the lockfile to pick
+  the right tool (npm vs pnpm vs bun vs yarn). Never invent script names.
+- `check_cmd` is the fastest meaningful verification (typecheck, lint, or a
+  quick test target); omit the key when none exists.
+- Groups may overlap. Entries for the same repo merge across groups, but
+  conflicting field values are a `config_invalid` error — define each repo's
+  commands in one place.
+- Declare `depends_on` ONLY with evidence that the repo consumes a sibling
+  FROM THIS WORKSPACE: path dependencies, workspace references, `file:` /
+  `link:` specifiers, relative imports across repo boundaries. Both repos
+  merely depending on the same published registry package is NOT an edge.
+  The graph must be a DAG — cycles fail at config load with exit 2.
+- Validate before declaring done: `ezgitx status` (config errors exit 2),
+  then a cheap dry-run `ezgitx run --all "git rev-parse --short HEAD"` to
+  prove every repo resolves and executes, then re-run `ezgitx init-skill`
+  so this skill reflects the updated workspace.
+
 ## Locking
 
 `pull` takes per-repo locks; unrelated repos are never serialized. On exit

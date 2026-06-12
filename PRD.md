@@ -235,6 +235,7 @@ File/path-level impact granularity, artifact caching, and remote build orchestra
 ## 10. Backlog (staged, intentionally not designed yet)
 
 * `ezgitx env` — expose workspace root, session context, and boundaries as JSON.
+* `ezgitx init` — scaffold `.ezgitx.yml` by surveying sibling git repos, deriving build commands from manifests, and detecting workspace-local dependency edges. Until then, the README's agent bootstrap prompt covers this path.
 * `ezgitx sync` — clone repos that exist in config but not on disk (takes the global lock).
 * `gix` (gitoxide) fast-path for read-only status at larger repo counts.
 * Compact/summary output modes if real agent payloads prove too large despite byte caps.
