@@ -4,6 +4,61 @@
 commands across many sibling git repositories concurrently — with output
 designed for AI coding agents, not humans.
 
+## What is this, in plain words?
+
+If your work lives in several project folders side by side — say a frontend,
+a backend, and a shared library, each its own git repo — you've probably
+watched your AI coding agent struggle with that. It pulls repos one at a
+time, builds things in the wrong order, and has no idea that the change it
+just made to your shared library breaks the app sitting right next to it.
+
+ezgitx is a small command-line tool that fixes exactly that. It gives your
+agent (and you) one clean way to:
+
+- **see** the state of every repo at once — `ezgitx status`
+- **update** them all in one go — `ezgitx pull`
+- **install/build/test across all of them**, in parallel, in the right
+  order — `ezgitx run --all --with-deps`
+- **know what breaks what** — change a shared library, then
+  `ezgitx check-impact` lists everything downstream that needs re-checking
+
+And it's built *for* agents: it never stops to ask questions, its output is
+machine-readable, and it can install its own instructions into your
+workspace (`ezgitx init-skill`) so agents like Claude Code discover and use
+it on their own — you never have to explain it to them.
+
+### The problem it solves
+
+AI agents are great inside one repo. The moment your work spans several
+sibling repos, they go blind: they can't tell which repos changed upstream,
+which builds are stale, or what depends on what. You end up burning time and
+tokens watching the agent rediscover your workspace every session — or
+debugging a failure that was really just a stale build of a sibling repo it
+didn't know about. ezgitx turns your workspace's structure into something an
+agent can simply read.
+
+### Get started in two minutes
+
+1. **Install it** (needs Rust's `cargo` and `git`):
+
+   ```sh
+   cargo install --git https://github.com/yuval-r/ezgitx
+   # (cargo install ezgitx — once the crate is published to crates.io)
+   ```
+
+2. **Let your agent set it up.** Open a Claude Code session in the folder
+   that *contains* your repos and paste the prompt from
+   [Quick start](#quick-start-let-your-coding-agent-generate-the-config)
+   below. The agent writes the config, detects the dependencies between your
+   repos, and installs its own instructions.
+
+3. **Talk naturally from then on.** In any session in that workspace:
+   *"pull everything"*, *"build the workspace"*, *"I changed the shared
+   lib — what do I need to re-test?"* — the agent reaches for ezgitx on its
+   own.
+
+---
+
 What makes it different from `mani`, `gita`, `myrepos`, or `git-xargs` is the
 **agent I/O contract**:
 
@@ -27,7 +82,8 @@ What makes it different from `mani`, `gita`, `myrepos`, or `git-xargs` is the
 ## Install
 
 ```sh
-cargo install ezgitx
+cargo install --git https://github.com/yuval-r/ezgitx
+# (cargo install ezgitx — once the crate is published to crates.io)
 ```
 
 Requires the system `git` binary. macOS and Linux; Rust 1.85+ to build.
