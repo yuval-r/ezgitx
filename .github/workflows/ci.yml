@@ -18,7 +18,7 @@ jobs:
         rust: [stable, "1.85"] # 1.85 is the declared MSRV — keep in sync with Cargo.toml
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install Rust ${{ matrix.rust }}
         run: rustup toolchain install ${{ matrix.rust }} --profile minimal --component rustfmt,clippy && rustup default ${{ matrix.rust }}
       - uses: Swatinem/rust-cache@v2
