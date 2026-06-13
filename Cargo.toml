@@ -8,7 +8,6 @@ description = "Agent-native multi-repo git CLI: JSONL output, zero interactivity
 repository = "https://github.com/yuval-r/ezgitx"
 keywords = ["git", "multi-repo", "agent", "cli", "jsonl"]
 categories = ["command-line-utilities", "development-tools"]
-exclude = ["/PRD.md"]
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
