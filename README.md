@@ -50,11 +50,10 @@ agent can just read.
 
    Or, if you have cargo: `cargo install ezgitx`
 
-2. Let your agent set it up. Open a Claude Code session in the folder that
-   *contains* your repos and paste the prompt from
-   [Quick start](#quick-start-let-your-coding-agent-generate-the-config)
-   below. The agent writes the config, detects the dependencies between your
-   repos, and installs its own instructions.
+2. Set it up. Walk through the [Quickstart](#quickstart) below, or let your
+   agent write the config: open a Claude Code session in the folder that
+   *contains* your repos and paste the
+   [setup prompt](#or-let-your-agent-write-the-config).
 
 3. From then on, just talk: "pull everything", "build the workspace", "I
    changed the shared lib, what do I need to re-test?". The agent reaches
@@ -101,13 +100,87 @@ cargo install --git https://github.com/yuval-r/ezgitx
 Requires the system `git` binary. macOS and Linux; Rust 1.85+ to build from
 source.
 
-## Setup
+## Quickstart
 
-### Quick start: let your coding agent generate the config
+Up and running in about a minute. Say your repos sit side by side in one
+folder:
 
-The quickest way to set this up is to let a coding agent write `.ezgitx.yml`
-for you, dependencies included. Start a Claude Code (or similar) session
-**at your workspace root** (the directory containing your repos) and paste:
+```sh
+$ cd ~/my-workspace
+$ ls
+backend  frontend  shared
+```
+
+Install ezgitx:
+
+```sh
+$ cargo install ezgitx
+```
+
+Add a `.ezgitx.yml` in that folder describing your repos. Here `backend` and
+`frontend` both build on top of `shared`, so they declare it with
+`depends_on`:
+
+```yaml
+version: 1
+groups:
+  app:
+    - path: ./shared
+      default_cmd: "npm install && npm run build"
+    - path: ./backend
+      default_cmd: "npm install && npm run build"
+      depends_on: ["shared"]
+    - path: ./frontend
+      default_cmd: "npm install && npm run build"
+      depends_on: ["shared"]
+```
+
+See the state of every repo at once, one JSON line each:
+
+```sh
+$ ezgitx status
+{"repo":"backend","path":"/Users/you/my-workspace/backend","branch":"main","head":"a1b2c3d","state":"clean","ahead":0,"behind":0,"stale_deps":["shared"]}
+{"repo":"frontend","path":"/Users/you/my-workspace/frontend","branch":"main","head":"9f8e7d6","state":"dirty","ahead":0,"behind":0,"stale_deps":["shared"]}
+{"repo":"shared","path":"/Users/you/my-workspace/shared","branch":"main","head":"4c5d6e7","state":"clean","ahead":0,"behind":0}
+```
+
+Pull all of them (fetch plus fast-forward, never a merge commit):
+
+```sh
+$ ezgitx pull
+{"repo":"backend","status":"up_to_date","commits_pulled":0,"head":"a1b2c3d"}
+{"repo":"frontend","status":"updated","commits_pulled":2,"head":"7e8f9a0"}
+{"repo":"shared","status":"up_to_date","commits_pulled":0,"head":"4c5d6e7"}
+```
+
+Build everything in dependency order. `shared` builds first, then the two
+repos that depend on it, with a summary line at the end:
+
+```sh
+$ ezgitx run --all --with-deps
+{"repo":"shared","exit_code":0,"duration_ms":3412,"stdout_tail":"...","stderr_tail":"","truncated":false}
+{"repo":"backend","exit_code":0,"duration_ms":5104,"stdout_tail":"...","stderr_tail":"","truncated":false}
+{"repo":"frontend","exit_code":0,"duration_ms":4880,"stdout_tail":"...","stderr_tail":"","truncated":false}
+{"type":"summary","total":3,"passed":3,"failed":0,"duration_ms":9220}
+```
+
+Last step, teach your AI agent about the tool:
+
+```sh
+$ ezgitx init-skill
+{"path":"/Users/you/my-workspace/.claude/skills/ezgitx/SKILL.md","status":"written"}
+```
+
+That's it. From now on a fresh Claude Code session in this folder finds the
+skill and runs ezgitx on its own. You never have to explain your layout
+again.
+
+### Or let your agent write the config
+
+Don't want to write the YAML by hand? Start a Claude Code (or similar)
+session **at your workspace root** (the directory containing your repos) and
+paste this. The agent reads your repos, works out the build commands and
+dependencies, and writes `.ezgitx.yml` for you:
 
 ```text
 I'm adopting ezgitx (an agent-native multi-repo CLI,
@@ -148,10 +221,10 @@ at the workspace root. Work evidence-first:
 One paste. The agent does the survey, writes the config, validates it
 against the binary, and installs the skill.
 
-### Manual setup
+### Config reference
 
-Put `.ezgitx.yml` at your workspace root (the directory containing your
-repos):
+A repo can belong to more than one group, and most keys are optional. This
+fuller example uses two groups, a `check_cmd`, and a `depends_on` edge:
 
 ```yaml
 version: 1
@@ -165,12 +238,6 @@ groups:
   data-pipelines:
     - path: ./spider
       default_cmd: "cargo build --release"
-```
-
-Then, if agents work in this workspace:
-
-```sh
-ezgitx init-skill   # writes .claude/skills/ezgitx/SKILL.md
 ```
 
 ## Commands
@@ -228,6 +295,13 @@ isn't mine alone.
 
 Found it useful? A star helps other people find it. I'm
 [@yuval-r](https://github.com/yuval-r) on GitHub.
+
+## Feedback
+
+Found a bug, want a feature, or hit a workspace layout that trips it up? Open
+an issue: https://github.com/yuval-r/ezgitx/issues. Pull requests are welcome
+too. If something in this README was confusing, that counts as a bug, so tell
+me.
 
 ## License
 
