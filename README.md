@@ -240,6 +240,14 @@ groups:
       default_cmd: "cargo build --release"
 ```
 
+## Examples
+
+For a complete, runnable walkthrough, see [EXAMPLES.md](EXAMPLES.md): it clones
+a five-repo workspace, builds it in dependency order, then changes one library
+and watches ezgitx flag and rebuild only what's downstream. It frames the
+`aiohttp` library stack as a stand-in for a private multi-repo project, so you
+can run the whole thing yourself.
+
 ## Commands
 
 ```sh
