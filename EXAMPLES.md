@@ -52,11 +52,11 @@ private platform, you can run this one yourself.
 
 ```sh
 mkdir acme && cd acme
-git clone --depth 1 https://github.com/aio-libs/multidict.git
-git clone --depth 1 https://github.com/aio-libs/frozenlist.git
-git clone --depth 1 https://github.com/aio-libs/yarl.git
-git clone --depth 1 https://github.com/aio-libs/aiosignal.git
-git clone --depth 1 --recurse-submodules https://github.com/aio-libs/aiohttp.git
+git clone https://github.com/aio-libs/multidict.git
+git clone https://github.com/aio-libs/frozenlist.git
+git clone https://github.com/aio-libs/yarl.git
+git clone https://github.com/aio-libs/aiosignal.git
+git clone --recurse-submodules https://github.com/aio-libs/aiohttp.git
 ```
 
 `aiohttp` vendors `llhttp` as a git submodule, so it needs
