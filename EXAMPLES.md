@@ -236,8 +236,19 @@ skips the three that didn't:
 {"type":"summary","total":2,"passed":2,"failed":0,"duration_ms":2842}
 ```
 
-`frozenlist`, `yarl`, and `aiosignal` are left alone. Their own source never
-changed, so they're not stale.
+`frozenlist`, `yarl`, and `aiosignal` are left alone, because ezgitx marks a
+repo stale only when its *own* commit moves, and theirs didn't. `--with-deps`
+rebuilds the target plus any upstream whose own source changed, which here is
+just `multidict`.
+
+Worth knowing about the model: `yarl` carried a stale-dependency flag in step
+6, and rebuilding `multidict` clears that flag without rebuilding `yarl`
+itself. With editable installs that is correct, since `yarl` imports the live
+`multidict`. In a workspace that compiles or generates code, `yarl` would
+still be built against the old `multidict`, so you would rebuild it yourself
+with `ezgitx run --repo yarl`. ezgitx tracks staleness by commit, not by built
+artifact; the `STALE_DEPS` column is the advisory that tells you when a manual
+rebuild is worth it.
 
 ## 8. Teach your agent
 
@@ -256,10 +267,9 @@ layout.
 - These are real public packages used as a stand-in for a private workspace.
   You wouldn't normally co-develop them, but the dependency shape is exactly
   what ezgitx targets, and a public stack is something you can actually run.
-- This workspace uses editable installs, so "stale" here means *re-test and
-  re-import against the changed dependency*. A workspace that produces
-  compiled artifacts would rebuild them instead; the staleness signal is the
-  same either way.
+- ezgitx tracks staleness by commit, not by built artifact. With the editable
+  installs used here that is exactly right; step 7 covers what changes for a
+  compiled or code-generated workspace.
 - This walkthrough was captured against these upstream commits. If the repos
   have moved since and a step diverges, check these out to reproduce it
   exactly: `multidict` 8b7c4d8, `frozenlist` 0334ec8, `yarl` 7b66654,
