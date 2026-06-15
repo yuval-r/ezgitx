@@ -9,11 +9,13 @@ use crate::workspace::{Repo, Workspace};
 
 /// `ezgitx run` (PRD §5.3, §9.4). Takes no locks (§7): commands are
 /// user-supplied and arbitrarily long.
+#[allow(clippy::too_many_arguments)]
 pub async fn run(
     ws: &Workspace,
     targets: Vec<Repo>,
     cmd: Option<String>,
     with_deps: bool,
+    with_dependents: bool,
     jobs: usize,
     max_bytes: usize,
     human: bool,
@@ -21,20 +23,49 @@ pub async fn run(
     let started = Instant::now();
     let target_names: BTreeSet<String> = targets.iter().map(|r| r.name.clone()).collect();
 
-    // --with-deps expands targets with their *stale* transitive upstreams
-    // (PRD §9.4); fresh upstreams are skipped. Without it, a single
-    // unordered wave — staleness never changes what executes. The union of
-    // all targets' upstreams is probed concurrently in one wave so shared
-    // dependencies are checked once.
-    let waves: Vec<Vec<String>> = if with_deps {
-        let mut upstreams: BTreeSet<String> = BTreeSet::new();
+    // --with-deps expands the targets with their *stale* transitive upstreams
+    // (PRD §9.4); fresh upstreams are skipped. Targets always execute, so only
+    // non-targets are candidates.
+    let mut candidates: BTreeSet<String> = BTreeSet::new();
+    if with_deps {
         for name in &target_names {
-            upstreams.extend(crate::graph::transitive_upstreams(ws, name));
+            candidates.extend(crate::graph::transitive_upstreams(ws, name));
         }
-        // Targets always execute; only non-target upstreams need probing.
-        upstreams.retain(|u| !target_names.contains(u));
-        let mut set = target_names.clone();
-        set.extend(state::filter_stale(ws, &upstreams, max_bytes).await);
+    }
+    if with_dependents {
+        for name in &target_names {
+            candidates.extend(
+                crate::graph::downstream_closure(ws, name)
+                    .into_iter()
+                    .map(|a| a.repo),
+            );
+        }
+    }
+    candidates.retain(|c| !target_names.contains(c));
+
+    // One HEAD probe over everything we judge for staleness or record against:
+    // targets + candidates + all their transitive upstreams. Refs don't move
+    // during a build, so this snapshot is valid at record time too.
+    let mut universe: BTreeSet<String> = target_names.clone();
+    universe.extend(candidates.iter().cloned());
+    let upstreams: Vec<String> = universe
+        .iter()
+        .flat_map(|name| crate::graph::transitive_upstreams(ws, name))
+        .collect();
+    universe.extend(upstreams);
+    let heads = state::current_heads(state::with_paths(ws, universe), jobs, max_bytes).await;
+
+    // A candidate joins the run only if it is stale under the manifest model.
+    let mut set = target_names.clone();
+    set.extend(
+        candidates
+            .into_iter()
+            .filter(|c| state::is_stale(ws, c, state::read(&ws.root, c).as_ref(), &heads)),
+    );
+
+    // With dependency flags the set runs in topological waves; a plain run is
+    // a single unordered wave (staleness never changes what executes).
+    let waves: Vec<Vec<String>> = if with_deps || with_dependents {
         crate::graph::topo_waves(ws, &set)
     } else {
         vec![target_names.iter().cloned().collect()]
@@ -57,8 +88,17 @@ pub async fn run(
         })
     };
 
-    let (passed, failed) =
-        exec::execute_waves(ws, waves, command_for, jobs, max_bytes, true, &mut emitter).await;
+    let (passed, failed) = exec::execute_waves(
+        ws,
+        waves,
+        command_for,
+        jobs,
+        max_bytes,
+        true,
+        &heads,
+        &mut emitter,
+    )
+    .await;
 
     let summary = RunSummary::new(passed, failed, started.elapsed().as_millis() as u64);
     emitter.emit_summary(&summary, summary.human());

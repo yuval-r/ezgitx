@@ -62,6 +62,12 @@ Target narrowly instead of scanning everything:
   then your targets. **Prefer this over manually sequencing builds across
   repos** — e.g. `ezgitx run --all --with-deps` builds the whole workspace
   in the right order in one command. Fresh upstreams are skipped.
+- `ezgitx run --with-dependents` — the forward counterpart: rebuild the
+  targets plus every **dependent** (downstream) repo that is stale against
+  them, in dependency order. Use after changing a shared/upstream repo to
+  propagate the change to everything built on top of it. Unlike
+  `check-impact --check` (which runs `check_cmd` as a dry run and records
+  nothing), this runs each repo's `default_cmd` and updates freshness.
 - `ezgitx check-impact` — list downstream repos affected by changes in the
   current (or `--repo <name>`) repo, with `depth` and dependency path `via`.
   Add `--check` to also run each affected repo's check command in
@@ -70,11 +76,16 @@ Target narrowly instead of scanning everything:
 ## Cross-repo dependency workflow
 
 - After modifying a shared/upstream repo, run `ezgitx check-impact` to see
-  what is affected, and `check-impact --check` to validate it.
-- `status` reports `stale_deps` per repo: upstream dependencies that changed
-  since they were last built through `ezgitx run`. If a build fails and
-  `status` shows `stale_deps`, retry with `ezgitx run --with-deps` — it
-  rebuilds the stale upstreams first, in dependency order, then your target.
+  what is affected. To actually rebuild that downstream set, use
+  `ezgitx run --repo <changed> --with-dependents`; to only validate it, use
+  `check-impact --check`.
+- `status` reports `stale_deps` per repo: upstream dependencies sitting at a
+  commit other than the one **this** repo was last built against through
+  `ezgitx run`. The flag is per-consumer — rebuilding a shared upstream for
+  one repo does not clear it on another repo that has not itself been rebuilt.
+- To build a target with its prerequisites, `ezgitx run --with-deps` rebuilds
+  stale upstreams first, in dependency order, then the target. `--with-deps`
+  (upstreams) and `--with-dependents` (downstreams) may be combined.
 - Staleness only ever errs toward redundant rebuilds, never toward stale
   artifacts being treated as fresh.
 

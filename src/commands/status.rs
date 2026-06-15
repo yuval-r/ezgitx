@@ -1,4 +1,5 @@
-use std::path::PathBuf;
+use std::collections::BTreeSet;
+use std::sync::Arc;
 
 use serde::Serialize;
 
@@ -9,8 +10,8 @@ use crate::output::Emitter;
 use crate::state;
 use crate::workspace::{Repo, Workspace};
 
-/// A repo paired with its resolved upstream `(name, path)` probes, if any.
-type PreparedRepo = (Repo, Option<Vec<(String, PathBuf)>>);
+/// A repo paired with the names of its transitive upstreams, if any.
+type PreparedRepo = (Repo, Option<BTreeSet<String>>);
 
 #[derive(Serialize)]
 struct StatusLine {
@@ -58,9 +59,7 @@ pub async fn run(
     let mut emitter = Emitter::new(human, HEADERS);
     let mut any_failure = false;
 
-    // Spawned tasks need 'static data, so resolve each repo's upstream
-    // (name, path) pairs up front (cheap, no git); the actual staleness
-    // probes then run inside the per-repo tasks, fully concurrent.
+    // Resolve each repo's transitive upstream names up front (cheap, no git).
     let root = ws.root.clone();
     let prepared: Vec<PreparedRepo> = repos
         .into_iter()
@@ -68,28 +67,39 @@ pub async fn run(
             let upstreams = if repo.depends_on.is_empty() {
                 None
             } else {
-                Some(state::with_paths(
-                    ws,
-                    crate::graph::transitive_upstreams(ws, &repo.name),
-                ))
+                Some(crate::graph::transitive_upstreams(ws, &repo.name))
             };
             (repo, upstreams)
         })
         .collect();
+
+    // Probe every distinct upstream's HEAD once, up front (honoring the global
+    // `jobs` cap), then share the snapshot across the per-repo tasks. Probing
+    // inside each task would multiply concurrency (jobs x jobs) and re-probe
+    // upstreams shared by multiple repos.
+    let all_upstreams: BTreeSet<String> = prepared
+        .iter()
+        .filter_map(|(_, upstreams)| upstreams.as_ref())
+        .flatten()
+        .cloned()
+        .collect();
+    let heads =
+        Arc::new(state::current_heads(state::with_paths(ws, all_upstreams), jobs, max_bytes).await);
 
     run_parallel(
         prepared,
         jobs,
         |(repo, upstreams)| {
             let root = root.clone();
+            let heads = heads.clone();
             async move {
                 if let Err(e) = git::check_is_repo(&repo.path) {
                     return Outcome::Err(repo.name, e);
                 }
-                let stale_deps = match upstreams {
-                    None => None,
-                    Some(pairs) => Some(state::filter_stale_paths(&root, pairs, max_bytes).await),
-                };
+                let stale_deps = upstreams.map(|names| {
+                    let record = state::read(&root, &repo.name);
+                    state::deps_drift(&names, record.as_ref(), &heads)
+                });
                 match git::status(&repo.path, max_bytes).await {
                     Ok(s) => Outcome::Ok(
                         Box::new(StatusLine {

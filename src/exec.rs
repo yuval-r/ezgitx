@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
 use std::path::Path;
 use std::sync::Arc;
@@ -129,6 +129,7 @@ pub async fn shell_in_repo(repo: &str, dir: &Path, cmd: &str, max_bytes: usize) 
 /// later waves emits `upstream_failed` instead of running. `command_for`
 /// returns the command to run, or an ErrorInfo (e.g. `no_default_cmd`).
 /// Successful repos get a freshness record when `record` is set.
+#[allow(clippy::too_many_arguments)]
 pub async fn execute_waves(
     ws: &Workspace,
     waves: Vec<Vec<String>>,
@@ -136,13 +137,14 @@ pub async fn execute_waves(
     jobs: usize,
     max_bytes: usize,
     record: bool,
+    heads: &BTreeMap<String, String>,
     emitter: &mut Emitter,
 ) -> (u64, u64) {
     let mut failed_repos: BTreeSet<String> = BTreeSet::new();
     let (mut passed, mut failed) = (0u64, 0u64);
 
     for wave in waves {
-        let mut runnable: Vec<(Repo, String)> = Vec::new();
+        let mut runnable: Vec<(Repo, String, BTreeMap<String, String>)> = Vec::new();
         for name in wave {
             let repo = ws.repos[&name].clone();
             // Upstreams may have failed through repos outside the executed
@@ -162,7 +164,13 @@ pub async fn execute_waves(
                 continue;
             }
             match git::check_is_repo(&repo.path).and_then(|()| command_for(&repo)) {
-                Ok(cmd) => runnable.push((repo, cmd)),
+                Ok(cmd) => {
+                    let deps: BTreeMap<String, String> = upstreams
+                        .into_iter()
+                        .filter_map(|u| heads.get(&u).map(|h| (u, h.clone())))
+                        .collect();
+                    runnable.push((repo, cmd, deps));
+                }
                 Err(e) => {
                     let line = RunLine::from_error(&name, e);
                     emitter.emit(&line, line.human_row());
@@ -176,13 +184,13 @@ pub async fn execute_waves(
         run_parallel(
             runnable,
             jobs,
-            |(repo, cmd)| {
+            |(repo, cmd, deps)| {
                 let root = root.clone();
                 async move {
                     let line = shell_in_repo(&repo.name, &repo.path, &cmd, max_bytes).await;
                     if record && !line.failed() {
                         if let Ok(head) = git::head_sha(&repo.path, max_bytes).await {
-                            state::record_success(&root, &repo.name, head, &cmd);
+                            state::record_success(&root, &repo.name, head, &cmd, deps);
                         }
                     }
                     line

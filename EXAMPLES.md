@@ -227,28 +227,39 @@ plus the commit it recorded at build time.
 ezgitx run --repo aiohttp --with-deps
 ```
 
-ezgitx rebuilds the service and the one upstream that actually moved, and
-skips the three that didn't:
+ezgitx rebuilds the service and every upstream it sits on that has moved since
+`aiohttp` was last built against it — here `multidict` (its own commit moved)
+and `yarl` (it was built against the old `multidict`) — in dependency order,
+and skips the rest:
 
 ```jsonl
 {"repo":"multidict","exit_code":0,"duration_ms":1792,"stdout_tail":"...Successfully installed multidict-6.7.2.dev0"}
+{"repo":"yarl","exit_code":0,"duration_ms":1233,"stdout_tail":"...Successfully installed yarl-1.22.0.dev0"}
 {"repo":"aiohttp","exit_code":0,"duration_ms":1028,"stdout_tail":"...Successfully installed aiohttp-4.0.0a2.dev0"}
-{"type":"summary","total":2,"passed":2,"failed":0,"duration_ms":2842}
+{"type":"summary","total":3,"passed":3,"failed":0,"duration_ms":4061}
 ```
 
-`frozenlist`, `yarl`, and `aiosignal` are left alone, because ezgitx marks a
-repo stale only when its *own* commit moves, and theirs didn't. `--with-deps`
-rebuilds the target plus any upstream whose own source changed, which here is
-just `multidict`.
+`frozenlist` and `aiosignal` are left alone — nothing they depend on moved.
+`yarl` rebuilds even though its own source didn't change, because ezgitx
+records the commit each repo was built *against*: `yarl` was built against the
+old `multidict`, so it stays stale until rebuilt. That is the difference from a
+model that tracks only each repo's own commit, and it is what keeps a compiled
+or code-generated `yarl` from silently sitting on a stale `multidict`.
 
-Worth knowing about the model: `yarl` carried a stale-dependency flag in step
-6, and rebuilding `multidict` clears that flag without rebuilding `yarl`
-itself. With editable installs that is correct, since `yarl` imports the live
-`multidict`. In a workspace that compiles or generates code, `yarl` would
-still be built against the old `multidict`, so you would rebuild it yourself
-with `ezgitx run --repo yarl`. ezgitx tracks staleness by commit, not by built
-artifact; the `STALE_DEPS` column is the advisory that tells you when a manual
-rebuild is worth it.
+The flag is per-consumer. Had you rebuilt `multidict` for some other consumer,
+`status` would still show `yarl` with `stale_deps: multidict` until you rebuilt
+`yarl` itself — rebuilding a shared upstream for one consumer never clears
+another consumer's flag.
+
+To push a change the other way — rebuild everything that sits on top of a repo
+you just changed — use the forward counterpart:
+
+```sh
+ezgitx run --repo multidict --with-dependents
+```
+
+That rebuilds `multidict` plus every stale dependent (`yarl`, `aiohttp`) in
+dependency order.
 
 ## 8. Teach your agent
 
@@ -267,9 +278,12 @@ layout.
 - These are real public packages used as a stand-in for a private workspace.
   You wouldn't normally co-develop them, but the dependency shape is exactly
   what ezgitx targets, and a public stack is something you can actually run.
-- ezgitx tracks staleness by commit, not by built artifact. With the editable
-  installs used here that is exactly right; step 7 covers what changes for a
-  compiled or code-generated workspace.
+- ezgitx tracks staleness by commit: each repo records the commit it was built
+  against for every upstream, so a downstream stays flagged until it is itself
+  rebuilt. With the editable installs used here a downstream rebuild is often
+  redundant (the import is live); in a compiled or code-generated workspace it
+  is exactly what keeps artifacts honest. `--with-deps` walks upstreams,
+  `--with-dependents` walks downstreams.
 - This walkthrough was captured against these upstream commits. If the repos
   have moved since and a step diverges, check these out to reproduce it
   exactly: `multidict` 8b7c4d8, `frozenlist` 0334ec8, `yarl` 7b66654,

@@ -256,6 +256,7 @@ ezgitx pull                    # concurrent fetch + ff-only merge (never merge c
 ezgitx run "cargo test"        # run a command in each repo, in parallel
 ezgitx run                     # run each repo's default_cmd
 ezgitx run --with-deps         # build stale upstream deps first, in dependency order
+ezgitx run --with-dependents   # also rebuild stale repos downstream of a change
 ezgitx check-impact            # what's downstream of the current repo?
 ezgitx check-impact --check    # ...and run each affected repo's check_cmd
 ezgitx init-skill              # generate the agent-facing skill file

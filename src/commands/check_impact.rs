@@ -96,8 +96,19 @@ pub async fn run(
                 )
             })
     };
-    let (passed, failed) =
-        exec::execute_waves(ws, waves, command_for, jobs, max_bytes, false, &mut emitter).await;
+    // check-impact never records freshness, so an empty heads map is correct.
+    let heads = std::collections::BTreeMap::new();
+    let (passed, failed) = exec::execute_waves(
+        ws,
+        waves,
+        command_for,
+        jobs,
+        max_bytes,
+        false,
+        &heads,
+        &mut emitter,
+    )
+    .await;
 
     let run_summary = RunSummary::new(passed, failed, started.elapsed().as_millis() as u64);
     emitter.emit_summary(&run_summary, run_summary.human());

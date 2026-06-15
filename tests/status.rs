@@ -95,9 +95,10 @@ fn stale_deps_surface_for_dependent_repos() {
     f.repo("lib");
     f.repo("app");
     f.config(
-        "version: 1\ngroups:\n  g:\n    - path: ./lib\n      default_cmd: \"true\"\n    - path: ./app\n      depends_on: [\"lib\"]\n",
+        "version: 1\ngroups:\n  g:\n    - path: ./lib\n      default_cmd: \"true\"\n    - path: ./app\n      default_cmd: \"true\"\n      depends_on: [\"lib\"]\n",
     );
-    // No freshness record yet: lib is stale from app's perspective.
+
+    // No record for app yet: its single upstream counts as drift.
     let assert = f
         .ezgitx()
         .args(["status", "--repo", "app"])
@@ -106,8 +107,11 @@ fn stale_deps_surface_for_dependent_repos() {
     let lines = jsonl(&assert.get_output().stdout);
     assert_eq!(lines[0]["stale_deps"], serde_json::json!(["lib"]));
 
-    // Build lib through ezgitx run, recording freshness.
-    f.ezgitx().args(["run", "--repo", "lib"]).assert().code(0);
+    // Build app (and its upstream) so app records the lib head it built against.
+    f.ezgitx()
+        .args(["run", "--repo", "app", "--with-deps"])
+        .assert()
+        .code(0);
     let assert = f
         .ezgitx()
         .args(["status", "--repo", "app"])
@@ -116,7 +120,7 @@ fn stale_deps_surface_for_dependent_repos() {
     let lines = jsonl(&assert.get_output().stdout);
     assert_eq!(lines[0]["stale_deps"], serde_json::json!([]));
 
-    // A new commit in lib makes it stale again.
+    // A new commit in lib moves it past the head app built against.
     f.commit(&f.root().join("lib"), "more.txt", "x");
     let assert = f
         .ezgitx()
@@ -125,6 +129,40 @@ fn stale_deps_surface_for_dependent_repos() {
         .code(0);
     let lines = jsonl(&assert.get_output().stdout);
     assert_eq!(lines[0]["stale_deps"], serde_json::json!(["lib"]));
+}
+
+#[test]
+fn rebuilding_shared_upstream_keeps_other_consumer_flagged() {
+    let f = Fixture::new();
+    f.repo("core");
+    f.repo("lib");
+    f.repo("tool");
+    f.config(
+        "version: 1\ngroups:\n  g:\n    - path: ./core\n      default_cmd: \"true\"\n    - path: ./lib\n      default_cmd: \"true\"\n      depends_on: [\"core\"]\n    - path: ./tool\n      default_cmd: \"true\"\n      depends_on: [\"core\"]\n",
+    );
+
+    // Build everything so all three have manifests.
+    f.ezgitx()
+        .args(["run", "--all", "--with-deps"])
+        .assert()
+        .code(0);
+
+    // core moves, then we rebuild it for lib only.
+    f.commit(&f.root().join("core"), "c.txt", "x");
+    f.ezgitx()
+        .args(["run", "--repo", "lib", "--with-deps"])
+        .assert()
+        .code(0);
+
+    let status_deps = |repo: &str| -> serde_json::Value {
+        let assert = f.ezgitx().args(["status", "--repo", repo]).assert().code(0);
+        let lines = jsonl(&assert.get_output().stdout);
+        lines[0]["stale_deps"].clone()
+    };
+
+    // lib was rebuilt against the new core; tool was not, so it stays flagged.
+    assert_eq!(status_deps("lib"), serde_json::json!([]));
+    assert_eq!(status_deps("tool"), serde_json::json!(["core"]));
 }
 
 #[test]
