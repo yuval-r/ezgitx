@@ -40,6 +40,16 @@ pub async fn run(
         vec![target_names.iter().cloned().collect()]
     };
 
+    // Probe HEADs once for freshness recording: every executed repo plus the
+    // upstreams it builds against. Refs don't move during a build, so a single
+    // snapshot taken now is valid at record time.
+    let executed: BTreeSet<String> = waves.iter().flatten().cloned().collect();
+    let mut universe = executed.clone();
+    for name in &executed {
+        universe.extend(crate::graph::transitive_upstreams(ws, name));
+    }
+    let heads = state::current_heads(state::with_paths(ws, universe), max_bytes).await;
+
     let mut emitter = Emitter::new(human, RUN_HEADERS);
     let command_for = |repo: &Repo| -> Result<String, ErrorInfo> {
         // Expanded upstreams always run their default_cmd (§9.4); explicit
@@ -57,8 +67,17 @@ pub async fn run(
         })
     };
 
-    let (passed, failed) =
-        exec::execute_waves(ws, waves, command_for, jobs, max_bytes, true, &mut emitter).await;
+    let (passed, failed) = exec::execute_waves(
+        ws,
+        waves,
+        command_for,
+        jobs,
+        max_bytes,
+        true,
+        &heads,
+        &mut emitter,
+    )
+    .await;
 
     let summary = RunSummary::new(passed, failed, started.elapsed().as_millis() as u64);
     emitter.emit_summary(&summary, summary.human());

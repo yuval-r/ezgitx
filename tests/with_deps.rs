@@ -116,6 +116,35 @@ fn without_with_deps_staleness_changes_nothing() {
 }
 
 #[test]
+fn records_dep_manifest() {
+    let f = Fixture::new();
+    chain(&f, "echo core >> ../build.log");
+
+    // First build: nothing is fresh, so the whole chain builds and records.
+    f.ezgitx()
+        .args(["run", "--repo", "app", "--with-deps"])
+        .assert()
+        .code(0);
+
+    let read_state = |name: &str| -> serde_json::Value {
+        let path = f.root().join(format!(".ezgitx/state/{name}.json"));
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+    };
+    let core = read_state("core");
+    let lib = read_state("lib");
+    let app = read_state("app");
+
+    // Each repo records the exact head of every transitive upstream it built
+    // against; a repo with no upstreams records an empty map.
+    assert_eq!(core["deps"], serde_json::json!({}));
+    assert_eq!(lib["deps"]["core"], core["head"]);
+    assert_eq!(app["deps"]["core"], core["head"]);
+    assert_eq!(app["deps"]["lib"], lib["head"]);
+    assert_eq!(app["deps"].as_object().unwrap().len(), 2);
+    assert_eq!(lib["deps"].as_object().unwrap().len(), 1);
+}
+
+#[test]
 fn explicit_cmd_applies_to_targets_not_upstreams() {
     let f = Fixture::new();
     chain(&f, "echo core >> ../build.log");

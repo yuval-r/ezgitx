@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -13,6 +13,10 @@ pub struct Record {
     pub head: String,
     pub cmd: String,
     pub finished_at: String,
+    /// Heads of this repo's transitive upstreams at the time it was built
+    /// (V2 manifest model). Absent in pre-manifest records → reads as empty.
+    #[serde(default)]
+    pub deps: BTreeMap<String, String>,
 }
 
 fn state_path(root: &Path, repo: &str) -> PathBuf {
@@ -51,11 +55,18 @@ pub fn write(root: &Path, repo: &str, record: &Record) -> std::io::Result<()> {
     })
 }
 
-pub fn record_success(root: &Path, repo: &str, head: String, cmd: &str) {
+pub fn record_success(
+    root: &Path,
+    repo: &str,
+    head: String,
+    cmd: &str,
+    deps: BTreeMap<String, String>,
+) {
     let record = Record {
         head,
         cmd: cmd.to_string(),
         finished_at: jiff::Timestamp::now().to_string(),
+        deps,
     };
     if let Err(e) = write(root, repo, &record) {
         eprintln!("ezgitx: failed to record freshness for {repo}: {e}");
@@ -85,6 +96,26 @@ pub fn with_paths(
         .into_iter()
         .filter_map(|n| ws.repos.get(&n).map(|r| (n, r.path.clone())))
         .collect()
+}
+
+/// Current HEAD of each `(name, path)` pair, probed concurrently in one wave.
+/// Unreadable repos are omitted from the map (callers treat "absent" as
+/// "moved", which only ever errs toward a rebuild).
+pub async fn current_heads(
+    repos: Vec<(String, PathBuf)>,
+    max_bytes: usize,
+) -> BTreeMap<String, String> {
+    let mut set = tokio::task::JoinSet::new();
+    for (name, path) in repos {
+        set.spawn(async move { (name, git::head_sha(&path, max_bytes).await.ok()) });
+    }
+    let mut heads = BTreeMap::new();
+    while let Some(result) = set.join_next().await {
+        if let Ok((name, Some(head))) = result {
+            heads.insert(name, head);
+        }
+    }
+    heads
 }
 
 /// Concurrently filter `(name, path)` pairs down to the stale ones, sorted.
