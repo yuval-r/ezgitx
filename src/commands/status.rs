@@ -92,7 +92,7 @@ pub async fn run(
                     Some(pairs) => {
                         let names: BTreeSet<String> =
                             pairs.iter().map(|(n, _)| n.clone()).collect();
-                        let heads = state::current_heads(pairs, max_bytes).await;
+                        let heads = state::current_heads(pairs, jobs, max_bytes).await;
                         let record = state::read(&root, &repo.name);
                         Some(state::deps_drift(&names, record.as_ref(), &heads))
                     }

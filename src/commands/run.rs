@@ -48,11 +48,12 @@ pub async fn run(
     // during a build, so this snapshot is valid at record time too.
     let mut universe: BTreeSet<String> = target_names.clone();
     universe.extend(candidates.iter().cloned());
-    // clone so we can extend `universe` while iterating its current members
-    for name in universe.clone() {
-        universe.extend(crate::graph::transitive_upstreams(ws, &name));
-    }
-    let heads = state::current_heads(state::with_paths(ws, universe), max_bytes).await;
+    let upstreams: Vec<String> = universe
+        .iter()
+        .flat_map(|name| crate::graph::transitive_upstreams(ws, name))
+        .collect();
+    universe.extend(upstreams);
+    let heads = state::current_heads(state::with_paths(ws, universe), jobs, max_bytes).await;
 
     // A candidate joins the run only if it is stale under the manifest model.
     let mut set = target_names.clone();

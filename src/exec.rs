@@ -166,8 +166,8 @@ pub async fn execute_waves(
             match git::check_is_repo(&repo.path).and_then(|()| command_for(&repo)) {
                 Ok(cmd) => {
                     let deps: BTreeMap<String, String> = upstreams
-                        .iter()
-                        .filter_map(|u| heads.get(u).map(|h| (u.clone(), h.clone())))
+                        .into_iter()
+                        .filter_map(|u| heads.get(&u).map(|h| (u, h.clone())))
                         .collect();
                     runnable.push((repo, cmd, deps));
                 }

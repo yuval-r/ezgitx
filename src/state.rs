@@ -85,20 +85,27 @@ pub fn with_paths(
         .collect()
 }
 
-/// Current HEAD of each `(name, path)` pair, probed concurrently in one wave.
-/// Unreadable repos are omitted from the map (callers treat "absent" as
-/// "moved", which only ever errs toward a rebuild).
+/// Current HEAD of each `(name, path)` pair, probed concurrently (capped at
+/// `jobs`, like `run_parallel`). Unreadable repos are omitted from the map
+/// (callers treat "absent" as "moved", which only ever errs toward a rebuild).
 pub async fn current_heads(
     repos: Vec<(String, PathBuf)>,
+    jobs: usize,
     max_bytes: usize,
 ) -> BTreeMap<String, String> {
+    let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(jobs.max(1)));
     let mut set = tokio::task::JoinSet::new();
     for (name, path) in repos {
-        set.spawn(async move { (name, git::head_sha(&path, max_bytes).await.ok()) });
+        let permit = semaphore.clone();
+        set.spawn(async move {
+            let _permit = permit.acquire_owned().await.expect("semaphore closed");
+            (name, git::head_sha(&path, max_bytes).await.ok())
+        });
     }
     let mut heads = BTreeMap::new();
     while let Some(result) = set.join_next().await {
-        if let Ok((name, Some(head))) = result {
+        let (name, head) = result.expect("current_heads task panicked");
+        if let Some(head) = head {
             heads.insert(name, head);
         }
     }
@@ -113,13 +120,11 @@ pub fn deps_drift(
     record: Option<&Record>,
     heads: &BTreeMap<String, String>,
 ) -> Vec<String> {
-    let mut out: Vec<String> = upstreams
+    upstreams
         .iter()
         .filter(|u| heads.get(*u) != record.and_then(|r| r.deps.get(*u)))
         .cloned()
-        .collect();
-    out.sort();
-    out
+        .collect()
 }
 
 /// A repo needs (re)building when it has no record, its own HEAD moved or is
