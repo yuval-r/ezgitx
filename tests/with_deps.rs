@@ -68,7 +68,9 @@ fn fresh_upstreams_are_skipped() {
     assert_eq!(summary(&lines)["total"], 1);
     assert_eq!(build_log(&f), ["app"]);
 
-    // New commit in core: core is stale again, lib stays fresh.
+    // New commit in core: core is stale (own head), and lib is stale too
+    // because it was built against the old core (manifest drift). app rebuilds
+    // on top of both.
     f.commit(&f.root().join("core"), "change.txt", "x");
     std::fs::remove_file(f.root().join("build.log")).unwrap();
     let assert = f
@@ -77,8 +79,8 @@ fn fresh_upstreams_are_skipped() {
         .assert()
         .code(0);
     let lines = jsonl(&assert.get_output().stdout);
-    assert_eq!(summary(&lines)["total"], 2);
-    assert_eq!(build_log(&f), ["core", "app"]);
+    assert_eq!(summary(&lines)["total"], 3);
+    assert_eq!(build_log(&f), ["core", "lib", "app"]);
 }
 
 #[test]

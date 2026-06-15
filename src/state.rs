@@ -144,11 +144,167 @@ pub async fn filter_stale_paths(
     stale
 }
 
-/// The stale subset of `names`, probed concurrently in a single wave.
-pub async fn filter_stale(
-    ws: &Workspace,
-    names: &BTreeSet<String>,
-    max_bytes: usize,
+/// Upstreams of a repo that sit at a commit other than the one the repo's
+/// record was built against. With no record (or a pre-manifest one), every
+/// readable upstream drifts. `heads` must hold the repo's transitive upstreams.
+pub fn deps_drift(
+    upstreams: &BTreeSet<String>,
+    record: Option<&Record>,
+    heads: &BTreeMap<String, String>,
 ) -> Vec<String> {
-    filter_stale_paths(&ws.root, with_paths(ws, names.iter().cloned()), max_bytes).await
+    let mut out: Vec<String> = upstreams
+        .iter()
+        .filter(|u| heads.get(*u) != record.and_then(|r| r.deps.get(*u)))
+        .cloned()
+        .collect();
+    out.sort();
+    out
+}
+
+/// A repo needs (re)building when it has no record, its own HEAD moved or is
+/// unreadable, or any transitive upstream drifted from its manifest. `heads`
+/// must hold the repo and its transitive upstreams.
+pub fn is_stale(
+    ws: &Workspace,
+    repo: &str,
+    record: Option<&Record>,
+    heads: &BTreeMap<String, String>,
+) -> bool {
+    let Some(record) = record else {
+        return true;
+    };
+    if heads.get(repo) != Some(&record.head) {
+        return true;
+    }
+    let upstreams = crate::graph::transitive_upstreams(ws, repo);
+    !deps_drift(&upstreams, Some(record), heads).is_empty()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::workspace::Repo;
+    use std::path::PathBuf;
+
+    fn ws(edges: &[(&str, &[&str])]) -> Workspace {
+        let repos = edges
+            .iter()
+            .map(|(name, deps)| {
+                (
+                    name.to_string(),
+                    Repo {
+                        name: name.to_string(),
+                        path: PathBuf::from(format!("/w/{name}")),
+                        default_cmd: None,
+                        check_cmd: None,
+                        depends_on: deps.iter().map(|d| d.to_string()).collect(),
+                    },
+                )
+            })
+            .collect();
+        Workspace {
+            root: PathBuf::from("/w"),
+            repos,
+            groups: BTreeMap::new(),
+        }
+    }
+
+    fn rec(head: &str, deps: &[(&str, &str)]) -> Record {
+        Record {
+            head: head.to_string(),
+            cmd: "c".to_string(),
+            finished_at: "t".to_string(),
+            deps: deps
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+        }
+    }
+
+    fn heads(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    fn upstreams(names: &[&str]) -> BTreeSet<String> {
+        names.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn deps_drift_flags_moved_upstream() {
+        let r = rec("APP", &[("core", "C1")]);
+        let h = heads(&[("core", "C2")]);
+        assert_eq!(
+            deps_drift(&upstreams(&["core"]), Some(&r), &h),
+            vec!["core".to_string()]
+        );
+    }
+
+    #[test]
+    fn deps_drift_clean_when_matching() {
+        let r = rec("APP", &[("core", "C1")]);
+        let h = heads(&[("core", "C1")]);
+        assert!(deps_drift(&upstreams(&["core"]), Some(&r), &h).is_empty());
+    }
+
+    #[test]
+    fn deps_drift_no_record_flags_all_sorted() {
+        let h = heads(&[("core", "C1"), ("lib", "L1")]);
+        assert_eq!(
+            deps_drift(&upstreams(&["core", "lib"]), None, &h),
+            vec!["core".to_string(), "lib".to_string()]
+        );
+    }
+
+    #[test]
+    fn deps_drift_legacy_record_without_deps_flags_all() {
+        let r = rec("APP", &[]); // pre-manifest record: deps empty
+        let h = heads(&[("core", "C1")]);
+        assert_eq!(
+            deps_drift(&upstreams(&["core"]), Some(&r), &h),
+            vec!["core".to_string()]
+        );
+    }
+
+    #[test]
+    fn deps_drift_both_absent_is_not_drift() {
+        // Upstream "ghost" is declared but unreadable (absent from heads) and was
+        // never recorded (absent from deps): both sides None → not drift. The
+        // rebuild obligation is covered by own-staleness of "ghost" itself.
+        let r = rec("APP", &[]);
+        let h = heads(&[]);
+        assert!(deps_drift(&upstreams(&["ghost"]), Some(&r), &h).is_empty());
+    }
+
+    #[test]
+    fn is_stale_false_when_all_fresh() {
+        let w = ws(&[("app", &["core"]), ("core", &[])]);
+        let r = rec("APP", &[("core", "C1")]);
+        let h = heads(&[("app", "APP"), ("core", "C1")]);
+        assert!(!is_stale(&w, "app", Some(&r), &h));
+    }
+
+    #[test]
+    fn is_stale_true_when_upstream_moved() {
+        let w = ws(&[("app", &["core"]), ("core", &[])]);
+        let r = rec("APP", &[("core", "C1")]);
+        let h = heads(&[("app", "APP"), ("core", "C2")]);
+        assert!(is_stale(&w, "app", Some(&r), &h));
+    }
+
+    #[test]
+    fn is_stale_true_when_own_head_moved() {
+        let w = ws(&[("app", &["core"]), ("core", &[])]);
+        let r = rec("APP_OLD", &[("core", "C1")]);
+        let h = heads(&[("app", "APP_NEW"), ("core", "C1")]);
+        assert!(is_stale(&w, "app", Some(&r), &h));
+    }
+
+    #[test]
+    fn is_stale_true_when_no_record() {
+        let w = ws(&[("app", &["core"]), ("core", &[])]);
+        assert!(is_stale(&w, "app", None, &BTreeMap::new()));
+    }
 }

@@ -21,34 +21,43 @@ pub async fn run(
     let started = Instant::now();
     let target_names: BTreeSet<String> = targets.iter().map(|r| r.name.clone()).collect();
 
-    // --with-deps expands targets with their *stale* transitive upstreams
-    // (PRD §9.4); fresh upstreams are skipped. Without it, a single
-    // unordered wave — staleness never changes what executes. The union of
-    // all targets' upstreams is probed concurrently in one wave so shared
-    // dependencies are checked once.
-    let waves: Vec<Vec<String>> = if with_deps {
-        let mut upstreams: BTreeSet<String> = BTreeSet::new();
+    // --with-deps expands the targets with their *stale* transitive upstreams
+    // (PRD §9.4); fresh upstreams are skipped. Targets always execute, so only
+    // non-targets are candidates.
+    let mut candidates: BTreeSet<String> = BTreeSet::new();
+    if with_deps {
         for name in &target_names {
-            upstreams.extend(crate::graph::transitive_upstreams(ws, name));
+            candidates.extend(crate::graph::transitive_upstreams(ws, name));
         }
-        // Targets always execute; only non-target upstreams need probing.
-        upstreams.retain(|u| !target_names.contains(u));
-        let mut set = target_names.clone();
-        set.extend(state::filter_stale(ws, &upstreams, max_bytes).await);
+    }
+    candidates.retain(|c| !target_names.contains(c));
+
+    // One HEAD probe over everything we judge for staleness or record against:
+    // targets + candidates + all their transitive upstreams. Refs don't move
+    // during a build, so this snapshot is valid at record time too.
+    let mut universe: BTreeSet<String> = target_names.clone();
+    universe.extend(candidates.iter().cloned());
+    // clone so we can extend `universe` while iterating its current members
+    for name in universe.clone() {
+        universe.extend(crate::graph::transitive_upstreams(ws, &name));
+    }
+    let heads = state::current_heads(state::with_paths(ws, universe), max_bytes).await;
+
+    // A candidate joins the run only if it is stale under the manifest model.
+    let mut set = target_names.clone();
+    set.extend(
+        candidates
+            .into_iter()
+            .filter(|c| state::is_stale(ws, c, state::read(&ws.root, c).as_ref(), &heads)),
+    );
+
+    // With dependency flags the set runs in topological waves; a plain run is
+    // a single unordered wave (staleness never changes what executes).
+    let waves: Vec<Vec<String>> = if with_deps {
         crate::graph::topo_waves(ws, &set)
     } else {
         vec![target_names.iter().cloned().collect()]
     };
-
-    // Probe HEADs once for freshness recording: every executed repo plus the
-    // upstreams it builds against. Refs don't move during a build, so a single
-    // snapshot taken now is valid at record time.
-    let executed: BTreeSet<String> = waves.iter().flatten().cloned().collect();
-    let mut universe = executed.clone();
-    for name in &executed {
-        universe.extend(crate::graph::transitive_upstreams(ws, name));
-    }
-    let heads = state::current_heads(state::with_paths(ws, universe), max_bytes).await;
 
     let mut emitter = Emitter::new(human, RUN_HEADERS);
     let command_for = |repo: &Repo| -> Result<String, ErrorInfo> {
