@@ -237,3 +237,27 @@ fn with_dependents_explicit_cmd_hits_target_only() {
     // Target ran the explicit command; dependents ran their default_cmd.
     assert_eq!(build_log(&f), ["custom", "lib", "app"]);
 }
+
+#[test]
+fn with_deps_and_with_dependents_compose() {
+    let f = Fixture::new();
+    chain(&f, "echo core >> ../build.log");
+    f.ezgitx()
+        .args(["run", "--all", "--with-deps"])
+        .assert()
+        .code(0);
+    std::fs::remove_file(f.root().join("build.log")).unwrap();
+
+    // Change core, then target lib expanding BOTH directions: --with-deps pulls
+    // in its upstream (core), --with-dependents pulls in its downstream (app).
+    // All three are stale, so all rebuild in dependency order.
+    f.commit(&f.root().join("core"), "c.txt", "x");
+    let assert = f
+        .ezgitx()
+        .args(["run", "--repo", "lib", "--with-deps", "--with-dependents"])
+        .assert()
+        .code(0);
+    let lines = jsonl(&assert.get_output().stdout);
+    assert_eq!(summary(&lines)["total"], 3);
+    assert_eq!(build_log(&f), ["core", "lib", "app"]);
+}
