@@ -77,12 +77,12 @@ pub async fn run(
     // `jobs` cap), then share the snapshot across the per-repo tasks. Probing
     // inside each task would multiply concurrency (jobs x jobs) and re-probe
     // upstreams shared by multiple repos.
-    let mut all_upstreams: BTreeSet<String> = BTreeSet::new();
-    for (_, upstreams) in &prepared {
-        if let Some(set) = upstreams {
-            all_upstreams.extend(set.iter().cloned());
-        }
-    }
+    let all_upstreams: BTreeSet<String> = prepared
+        .iter()
+        .filter_map(|(_, upstreams)| upstreams.as_ref())
+        .flatten()
+        .cloned()
+        .collect();
     let heads =
         Arc::new(state::current_heads(state::with_paths(ws, all_upstreams), jobs, max_bytes).await);
 

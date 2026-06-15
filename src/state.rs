@@ -143,7 +143,7 @@ pub fn is_stale(
         return true;
     }
     let upstreams = crate::graph::transitive_upstreams(ws, repo);
-    !deps_drift(&upstreams, Some(record), heads).is_empty()
+    upstreams.iter().any(|u| heads.get(u) != record.deps.get(u))
 }
 
 #[cfg(test)]
