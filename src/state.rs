@@ -73,19 +73,6 @@ pub fn record_success(
     }
 }
 
-/// A repo is stale when its current HEAD differs from the recorded one or no
-/// record exists (PRD §9.3). Unreadable HEAD also counts as stale — the model
-/// only ever degrades toward redundant rebuilds, never falsely-fresh.
-async fn check_stale(root: PathBuf, repo: String, path: PathBuf, max_bytes: usize) -> bool {
-    let Some(record) = read(&root, &repo) else {
-        return true;
-    };
-    match git::head_sha(&path, max_bytes).await {
-        Ok(head) => head != record.head,
-        Err(_) => true,
-    }
-}
-
 /// Resolve repo names to `(name, path)` pairs for owned-data probing.
 /// Cheap and synchronous — do this before moving work into spawned tasks.
 pub fn with_paths(
@@ -116,32 +103,6 @@ pub async fn current_heads(
         }
     }
     heads
-}
-
-/// Concurrently filter `(name, path)` pairs down to the stale ones, sorted.
-/// Each check spawns a `git rev-parse`; probing them in one parallel wave
-/// avoids both sequential bottlenecks and re-probing shared dependencies.
-pub async fn filter_stale_paths(
-    root: &Path,
-    repos: Vec<(String, PathBuf)>,
-    max_bytes: usize,
-) -> Vec<String> {
-    let mut set = tokio::task::JoinSet::new();
-    for (name, path) in repos {
-        let root = root.to_path_buf();
-        set.spawn(async move {
-            let stale = check_stale(root, name.clone(), path, max_bytes).await;
-            (name, stale)
-        });
-    }
-    let mut stale = Vec::new();
-    while let Some(result) = set.join_next().await {
-        if let Ok((name, true)) = result {
-            stale.push(name);
-        }
-    }
-    stale.sort();
-    stale
 }
 
 /// Upstreams of a repo that sit at a commit other than the one the repo's

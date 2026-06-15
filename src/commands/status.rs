@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use serde::Serialize;
@@ -88,7 +89,13 @@ pub async fn run(
                 }
                 let stale_deps = match upstreams {
                     None => None,
-                    Some(pairs) => Some(state::filter_stale_paths(&root, pairs, max_bytes).await),
+                    Some(pairs) => {
+                        let names: BTreeSet<String> =
+                            pairs.iter().map(|(n, _)| n.clone()).collect();
+                        let heads = state::current_heads(pairs, max_bytes).await;
+                        let record = state::read(&root, &repo.name);
+                        Some(state::deps_drift(&names, record.as_ref(), &heads))
+                    }
                 };
                 match git::status(&repo.path, max_bytes).await {
                     Ok(s) => Outcome::Ok(
