@@ -75,6 +75,9 @@ pub enum Command {
         /// Also run stale upstream dependencies first, in dependency order
         #[arg(long = "with-deps")]
         with_deps: bool,
+        /// Also run stale downstream dependents, in dependency order
+        #[arg(long = "with-dependents")]
+        with_dependents: bool,
         #[command(flatten)]
         target: TargetArgs,
     },

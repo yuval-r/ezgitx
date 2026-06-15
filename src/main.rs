@@ -66,10 +66,21 @@ async fn dispatch(cli: Cli) -> i32 {
         Command::Run {
             cmd,
             with_deps,
+            with_dependents,
             target,
         } => match select_filtered(&ws, &target, &cwd, jobs, max_bytes).await {
             Ok(repos) => {
-                commands::run::run(&ws, repos, cmd, with_deps, jobs, max_bytes, human).await
+                commands::run::run(
+                    &ws,
+                    repos,
+                    cmd,
+                    with_deps,
+                    with_dependents,
+                    jobs,
+                    max_bytes,
+                    human,
+                )
+                .await
             }
             Err(e) => usage(e),
         },

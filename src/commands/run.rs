@@ -9,11 +9,13 @@ use crate::workspace::{Repo, Workspace};
 
 /// `ezgitx run` (PRD §5.3, §9.4). Takes no locks (§7): commands are
 /// user-supplied and arbitrarily long.
+#[allow(clippy::too_many_arguments)]
 pub async fn run(
     ws: &Workspace,
     targets: Vec<Repo>,
     cmd: Option<String>,
     with_deps: bool,
+    with_dependents: bool,
     jobs: usize,
     max_bytes: usize,
     human: bool,
@@ -28,6 +30,15 @@ pub async fn run(
     if with_deps {
         for name in &target_names {
             candidates.extend(crate::graph::transitive_upstreams(ws, name));
+        }
+    }
+    if with_dependents {
+        for name in &target_names {
+            candidates.extend(
+                crate::graph::downstream_closure(ws, name)
+                    .into_iter()
+                    .map(|a| a.repo),
+            );
         }
     }
     candidates.retain(|c| !target_names.contains(c));
@@ -53,7 +64,7 @@ pub async fn run(
 
     // With dependency flags the set runs in topological waves; a plain run is
     // a single unordered wave (staleness never changes what executes).
-    let waves: Vec<Vec<String>> = if with_deps {
+    let waves: Vec<Vec<String>> = if with_deps || with_dependents {
         crate::graph::topo_waves(ws, &set)
     } else {
         vec![target_names.iter().cloned().collect()]

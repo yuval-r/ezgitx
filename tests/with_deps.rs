@@ -166,3 +166,74 @@ fn explicit_cmd_applies_to_targets_not_upstreams() {
     // Upstreams ran their default_cmd; the target ran the explicit command.
     assert_eq!(build_log(&f), ["core", "lib", "custom"]);
 }
+
+#[test]
+fn with_dependents_cascades_downstream() {
+    let f = Fixture::new();
+    chain(&f, "echo core >> ../build.log");
+    f.ezgitx()
+        .args(["run", "--all", "--with-deps"])
+        .assert()
+        .code(0);
+    std::fs::remove_file(f.root().join("build.log")).unwrap();
+
+    // Change core, then push the change forward to everything on top of it.
+    f.commit(&f.root().join("core"), "c.txt", "x");
+    let assert = f
+        .ezgitx()
+        .args(["run", "--repo", "core", "--with-dependents"])
+        .assert()
+        .code(0);
+    let lines = jsonl(&assert.get_output().stdout);
+    assert_eq!(summary(&lines)["total"], 3);
+    assert_eq!(build_log(&f), ["core", "lib", "app"]);
+}
+
+#[test]
+fn with_dependents_skips_fresh_downstream() {
+    let f = Fixture::new();
+    chain(&f, "echo core >> ../build.log");
+    f.ezgitx()
+        .args(["run", "--all", "--with-deps"])
+        .assert()
+        .code(0);
+    std::fs::remove_file(f.root().join("build.log")).unwrap();
+
+    // Nothing changed: only the target runs (downstreams are fresh against it).
+    let assert = f
+        .ezgitx()
+        .args(["run", "--repo", "core", "--with-dependents"])
+        .assert()
+        .code(0);
+    let lines = jsonl(&assert.get_output().stdout);
+    assert_eq!(summary(&lines)["total"], 1);
+    assert_eq!(build_log(&f), ["core"]);
+}
+
+#[test]
+fn with_dependents_explicit_cmd_hits_target_only() {
+    let f = Fixture::new();
+    chain(&f, "echo core >> ../build.log");
+    f.ezgitx()
+        .args(["run", "--all", "--with-deps"])
+        .assert()
+        .code(0);
+    std::fs::remove_file(f.root().join("build.log")).unwrap();
+
+    f.commit(&f.root().join("core"), "c.txt", "x");
+    let assert = f
+        .ezgitx()
+        .args([
+            "run",
+            "--repo",
+            "core",
+            "--with-dependents",
+            "echo custom >> ../build.log",
+        ])
+        .assert()
+        .code(0);
+    let lines = jsonl(&assert.get_output().stdout);
+    assert_eq!(summary(&lines)["total"], 3);
+    // Target ran the explicit command; dependents ran their default_cmd.
+    assert_eq!(build_log(&f), ["custom", "lib", "app"]);
+}
