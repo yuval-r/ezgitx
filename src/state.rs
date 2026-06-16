@@ -52,7 +52,10 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
         std::process::id(),
         unique_suffix()
     ));
-    std::fs::write(&tmp, bytes)?;
+    if let Err(e) = std::fs::write(&tmp, bytes) {
+        let _ = std::fs::remove_file(&tmp); // don't leave a partial tmp on write failure
+        return Err(e);
+    }
     std::fs::rename(&tmp, path).inspect_err(|_| {
         let _ = std::fs::remove_file(&tmp);
     })
