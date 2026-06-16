@@ -178,8 +178,8 @@ skill and runs ezgitx on its own. You never have to explain your layout
 again.
 
 And at the start of each session, one command catches the agent up on what
-moved across the workspace since it last looked — a snapshot plus, per repo,
-the commits added since the previous `brief`:
+moved across the workspace since it last looked. It prints a snapshot plus,
+per repo, the commits added since the previous `brief`:
 
 ```sh
 $ ezgitx brief
@@ -189,7 +189,7 @@ $ ezgitx brief
 {"type":"summary","repos":3,"with_new_commits":1,"failed":0}
 ```
 
-It's offline and deterministic — it never fetches. The first `brief` in a
+It's offline and deterministic, and never fetches. The first `brief` in a
 workspace just records a baseline (no delta yet); every run after shows only
 what's new.
 
