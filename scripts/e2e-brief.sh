@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# End-to-end test for `ezgitx brief`, run against the real built binary.
+# End-to-end test for `ezgitx brief` and `changed`, run against the real built binary.
 #
 # Unlike `cargo test` (which exercises units and per-command cases), this drives
 # a full agent-session narrative across a multi-repo workspace with a dependency
@@ -145,7 +145,7 @@ mk_remote() { # ws name  — bare origin + workspace clone (pull-capable)
 commit_in()    { local ws="$1" n="$2" f="$3" m="$4"; echo "$RANDOM-$f" > "$ws/$n/$f"; git -C "$ws/$n" add .; git -C "$ws/$n" commit -q -m "$m"; }
 push_upstream(){ local ws="$1" n="$2" f="$3" m="$4"; echo "$RANDOM-$f" > "$ws/.writers/$n/$f"; git -C "$ws/.writers/$n" add .; git -C "$ws/.writers/$n" commit -q -m "$m"; git -C "$ws/.writers/$n" push -q origin main; }
 
-echo "=== ezgitx brief — end-to-end ==="
+echo "=== ezgitx brief + changed — end-to-end ==="
 echo "binary: $BIN"
 
 # =============================================================================
@@ -279,6 +279,29 @@ exits 2 "unknown --repo: exit 2"
 exits 2 "unknown --group: exit 2"
 ( cd "$WS" && "$BIN" brief --frobnicate  >"$OUT" 2>"$ERR" ); RC=$?
 exits 2 "unknown flag: exit 2 (clap usage)"
+
+# =============================================================================
+echo; echo "## Phase 9 — changed --since (files + commits; ref, last-brief, degrade)"
+CW="$(new_ws)"; mk_local "$CW" svc
+printf 'version: 1\ngroups:\n  g:\n    - path: ./svc\n' > "$CW/.ezgitx.yml"
+commit_in "$CW" svc client.rs "add client"
+commit_in "$CW" svc retry.rs  "add retry"
+( cd "$CW" && "$BIN" changed --since HEAD~2 >"$OUT" 2>"$ERR" ); RC=$?
+exits 0 "changed --since <ref> exits 0"
+eq "$(field svc new_commits)" "2" "changed: 2 commits since HEAD~2"
+contains "$OUT" '"path":"client.rs"' "changed: lists client.rs"
+contains "$OUT" '"status":"A"' "changed: file status A"
+( cd "$CW" && "$BIN" changed >"$OUT" 2>"$ERR" ); RC=$?
+exits 0 "changed (no baseline) exits 0"
+eq "$(field svc delta_unavailable)" "no_baseline" "bare changed with no baseline degrades"
+( cd "$CW" && "$BIN" brief >/dev/null 2>&1 )            # record baseline
+commit_in "$CW" svc feature.rs "new feature"
+( cd "$CW" && "$BIN" changed >"$OUT" 2>"$ERR" ); RC=$?
+eq "$(field svc since_ref)" "last-brief" "bare changed defaults to last-brief"
+eq "$(field svc new_commits)" "1" "changed last-brief: 1 new commit"
+( cd "$CW" && "$BIN" changed --since no-such-ref >"$OUT" 2>"$ERR" ); RC=$?
+exits 0 "changed bad ref exits 0"
+eq "$(field svc delta_unavailable)" "ref_not_found" "explicit missing ref degrades"
 
 # =============================================================================
 echo
