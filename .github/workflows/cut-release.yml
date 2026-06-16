@@ -94,7 +94,7 @@ jobs:
           cargo test --locked
           cargo clippy --all-targets -- -D warnings
           cargo fmt --all --check
-          cargo publish --locked --dry-run
+          cargo publish --locked --dry-run --allow-dirty   # bump is staged-but-uncommitted at this point
 
       - name: Commit the bump locally
         env:
