@@ -52,9 +52,11 @@ Target narrowly instead of scanning everything:
   a `commits` list of `{sha, subject}` (newest-first, capped) added locally since
   you last ran `brief`. Offline; never fetches. The first run in a workspace has
   no delta (it just records a baseline); later runs show only what's newer. Pass
-  `--no-record` to peek without advancing that baseline. Ends with a
-  `{"type": "summary", ...}` line. Prefer this over re-scanning the workspace by
-  hand each session.
+  `--no-record` to peek without advancing that baseline. With `--dirty`, only the
+  repos it shows advance their baseline, so commits in a clean repo it filtered
+  out still surface in the next unfiltered `brief` (never silently skipped). Ends
+  with a `{"type": "summary", ...}` line. Prefer this over re-scanning the
+  workspace by hand each session.
 - `ezgitx status` — working-tree + sync state per repo. Never fetches;
   `ahead`/`behind` reflect the last fetch. `state` is `clean` | `dirty` |
   `detached` | `conflicted`.
