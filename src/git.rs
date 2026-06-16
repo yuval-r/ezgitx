@@ -199,10 +199,9 @@ pub fn parse_name_status(stdout: &[u8], max_count: usize, max_bytes: usize) -> C
     let mut stop = false;
 
     while let Some(status_tok) = tokens.next() {
-        let code = String::from_utf8_lossy(status_tok)
-            .chars()
-            .next()
-            .unwrap_or('?');
+        // Status codes are always ASCII, so the first byte is the code — no need
+        // to decode the whole token.
+        let code = status_tok.first().copied().unwrap_or(b'?') as char;
         // Rename/copy carry two paths (old, new); report the new one.
         let path_tok = if matches!(code, 'R' | 'C') {
             tokens.next(); // old path

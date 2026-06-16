@@ -130,21 +130,27 @@ pub async fn run(
                     Err(e) => return Outcome::Err(repo.name, e),
                 };
 
-                // Delta: commits + files. An engine error degrades, never fails.
-                let range = format!("{from_ref}..HEAD");
-                let commits = git::commit_range(&repo.path, &range, MAX_COMMITS, max_bytes).await;
-                let files = git::changed_files(&repo.path, &range, MAX_FILES, max_bytes).await;
-                match (commits, files) {
-                    (Ok(c), Ok(f)) => {
-                        line.from = Some(from);
-                        line.to = Some(to);
-                        line.new_commits = Some(c.total);
-                        line.commits = Some(c.commits);
-                        line.truncated = Some(c.truncated || f.truncated);
-                        line.files = Some(f.files);
-                    }
-                    _ => line.delta_unavailable = Some("ref_not_found"),
-                }
+                // Delta over the *resolved* endpoints, so the range always matches
+                // the reported from/to even if HEAD or the ref moves mid-run. Both
+                // endpoints already resolved, so an error here is a real git failure
+                // (not a missing ref) and propagates rather than degrading.
+                let range = format!("{from}..{to}");
+                let commits =
+                    match git::commit_range(&repo.path, &range, MAX_COMMITS, max_bytes).await {
+                        Ok(c) => c,
+                        Err(e) => return Outcome::Err(repo.name, e),
+                    };
+                let files = match git::changed_files(&repo.path, &range, MAX_FILES, max_bytes).await
+                {
+                    Ok(f) => f,
+                    Err(e) => return Outcome::Err(repo.name, e),
+                };
+                line.from = Some(from);
+                line.to = Some(to);
+                line.new_commits = Some(commits.total);
+                line.commits = Some(commits.commits);
+                line.truncated = Some(commits.truncated || files.truncated);
+                line.files = Some(files.files);
                 Outcome::Ok(Box::new(line))
             }
         },
