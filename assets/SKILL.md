@@ -57,6 +57,13 @@ Target narrowly instead of scanning everything:
   out still surface in the next unfiltered `brief` (never silently skipped). Ends
   with a `{"type": "summary", ...}` line. Prefer this over re-scanning the
   workspace by hand each session.
+- `ezgitx changed --since <ref|last-brief>` — the standalone delta: per repo, the
+  `files` ({status `A`/`M`/`D`/`R`, path}) and `commits` ({sha, subject}) that moved
+  since `<ref>` (any git ref) or, by default, since your last `brief`. Both lists are
+  capped (`truncated` flags it). Offline. A repo where the ref or baseline is missing
+  degrades to a `delta_unavailable` reason (`no_baseline` / `ref_not_found` /
+  `baseline_unreachable` / `unborn`) at exit 0, not a failure, so a ref only some repos
+  share still works. Ends with a `{"type": "summary", ...}` line.
 - `ezgitx status` — working-tree + sync state per repo. Never fetches;
   `ahead`/`behind` reflect the last fetch. `state` is `clean` | `dirty` |
   `detached` | `conflicted`.

@@ -270,6 +270,7 @@ can run the whole thing yourself.
 
 ```sh
 ezgitx brief                   # session snapshot + what changed since the last brief (offline)
+ezgitx changed --since <ref>   # files + commits that moved since a ref (or your last brief)
 ezgitx status                  # working-tree + sync state per repo (never fetches)
 ezgitx pull                    # concurrent fetch + ff-only merge (never merge commits)
 ezgitx run "cargo test"        # run a command in each repo, in parallel
