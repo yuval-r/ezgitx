@@ -1,6 +1,8 @@
 use std::path::Path;
 use std::process::Output;
 
+use serde::Serialize;
+
 use crate::errors::{ErrorCode, ErrorInfo};
 
 /// Spawn the system `git` binary (PRD §3.6) with interactivity disabled
@@ -48,6 +50,95 @@ pub fn check_is_repo(path: &Path) -> Result<(), ErrorInfo> {
 pub async fn head_sha(dir: &Path, max_bytes: usize) -> Result<String, ErrorInfo> {
     let out = git_ok(dir, &["rev-parse", "HEAD"], max_bytes).await?;
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+/// A single commit in a range, for `brief`/`changed --since` deltas.
+#[derive(Debug, PartialEq, Clone, Serialize)]
+pub struct CommitSummary {
+    /// Full 40-char commit hash.
+    pub sha: String,
+    /// First line of the commit message.
+    pub subject: String,
+}
+
+/// Listing a commit range: the full count plus a capped, newest-first sample.
+#[derive(Debug, PartialEq)]
+pub struct CommitRange {
+    /// Total commits in the range (uncapped).
+    pub total: usize,
+    /// Up to `max_count` newest commits, also bounded by accumulated subject bytes.
+    pub commits: Vec<CommitSummary>,
+    /// `true` when the sample dropped commits the range actually contains.
+    pub truncated: bool,
+}
+
+/// List commits in `range` (e.g. "A..HEAD"), newest-first, capped to `max_count`
+/// entries and `max_bytes` of accumulated subject bytes. Offline; no network.
+///
+/// `-z` NUL-separates records so multi-line/binary subjects can't break parsing;
+/// `%x1f` (US) splits the full sha from the subject. Locale-stable under LC_ALL=C.
+pub async fn commit_range(
+    dir: &Path,
+    range: &str,
+    max_count: usize,
+    max_bytes: usize,
+) -> Result<CommitRange, ErrorInfo> {
+    let out = git_ok(
+        dir,
+        &["log", "-z", "--pretty=format:%H%x1f%s", range],
+        max_bytes,
+    )
+    .await?;
+    Ok(parse_commit_log(&out.stdout, max_count, max_bytes))
+}
+
+/// Parse `git log -z --pretty=format:%H%x1f%s` output. Free function so the
+/// capping/framing logic is unit-testable without spawning git.
+pub fn parse_commit_log(stdout: &[u8], max_count: usize, max_bytes: usize) -> CommitRange {
+    let mut total = 0usize;
+    let mut commits = Vec::new();
+    let mut subject_bytes = 0usize;
+    let mut stop_including = false;
+
+    for record in stdout.split(|&b| b == 0) {
+        if record.is_empty() {
+            continue; // guards the trailing record git emits after the last commit
+        }
+        total += 1;
+        if stop_including || commits.len() >= max_count {
+            stop_including = true;
+            continue;
+        }
+        let text = String::from_utf8_lossy(record);
+        let (sha, subject) = match text.split_once('\u{1f}') {
+            Some((sha, subject)) => (sha.to_string(), subject.to_string()),
+            None => (text.into_owned(), String::new()),
+        };
+        // Always keep at least one commit; otherwise stop once the next subject
+        // would push past the byte cap (still counting it toward `total`).
+        if !commits.is_empty() && subject_bytes + subject.len() > max_bytes {
+            stop_including = true;
+            continue;
+        }
+        subject_bytes += subject.len();
+        commits.push(CommitSummary { sha, subject });
+    }
+
+    let truncated = total > commits.len();
+    CommitRange {
+        total,
+        commits,
+        truncated,
+    }
+}
+
+/// Whether `rev` resolves to a commit in `dir`. `false` (not an error) when the
+/// rev is syntactically fine but unreachable (rewritten history / gc). Uses the
+/// raw `git` helper so a clean exit-1 isn't turned into a `git_failed`.
+pub async fn rev_exists(dir: &Path, rev: &str) -> Result<bool, ErrorInfo> {
+    let spec = format!("{rev}^{{commit}}");
+    let out = git(dir, &["rev-parse", "--verify", "--quiet", &spec]).await?;
+    Ok(out.status.success())
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -230,5 +321,76 @@ mod tests {
         let s = parse_porcelain_v2("# branch.oid (initial)\n# branch.head main\n");
         assert_eq!(s.head, "(initial)");
         assert_eq!(s.state, TreeState::Clean);
+    }
+
+    /// Mimic `git log -z --pretty=format:%H%x1f%s`: `<sha>\x1f<subject>` records
+    /// each terminated by NUL.
+    fn log_bytes(records: &[(&str, &str)]) -> Vec<u8> {
+        let mut out = Vec::new();
+        for (sha, subject) in records {
+            out.extend_from_slice(sha.as_bytes());
+            out.push(0x1f);
+            out.extend_from_slice(subject.as_bytes());
+            out.push(0);
+        }
+        out
+    }
+
+    #[test]
+    fn parse_commit_log_empty() {
+        let r = parse_commit_log(b"", 20, 2048);
+        assert_eq!(r.total, 0);
+        assert!(r.commits.is_empty());
+        assert!(!r.truncated);
+    }
+
+    #[test]
+    fn parse_commit_log_orders_and_splits() {
+        let bytes = log_bytes(&[("sha1", "first subject"), ("sha2", "second")]);
+        let r = parse_commit_log(&bytes, 20, 2048);
+        assert_eq!(r.total, 2);
+        assert_eq!(r.commits.len(), 2);
+        assert_eq!(r.commits[0].sha, "sha1");
+        assert_eq!(r.commits[0].subject, "first subject");
+        assert_eq!(r.commits[1].subject, "second");
+        assert!(!r.truncated);
+    }
+
+    #[test]
+    fn parse_commit_log_caps_by_count() {
+        let bytes = log_bytes(&[("a", "1"), ("b", "2"), ("c", "3")]);
+        let r = parse_commit_log(&bytes, 2, 2048);
+        assert_eq!(r.total, 3);
+        assert_eq!(r.commits.len(), 2);
+        assert!(r.truncated);
+    }
+
+    #[test]
+    fn parse_commit_log_caps_by_bytes() {
+        let bytes = log_bytes(&[("a", "xxxx"), ("b", "yyyy")]);
+        let r = parse_commit_log(&bytes, 20, 4);
+        assert_eq!(r.total, 2);
+        assert_eq!(r.commits.len(), 1); // first fits (4 bytes); second would exceed
+        assert!(r.truncated);
+    }
+
+    #[test]
+    fn parse_commit_log_keeps_at_least_one_over_byte_cap() {
+        let bytes = log_bytes(&[("a", "this subject is well over the tiny cap")]);
+        let r = parse_commit_log(&bytes, 20, 4);
+        assert_eq!(r.total, 1);
+        assert_eq!(r.commits.len(), 1);
+        assert!(!r.truncated);
+    }
+
+    #[test]
+    fn parse_commit_log_lossy_utf8_and_missing_separator() {
+        // Invalid UTF-8, no US separator: whole record becomes the sha (lossy),
+        // subject empty — never panics.
+        let bytes = vec![0xff, 0xfe, 0x00];
+        let r = parse_commit_log(&bytes, 20, 2048);
+        assert_eq!(r.total, 1);
+        assert_eq!(r.commits[0].subject, "");
+        assert!(r.commits[0].sha.contains('\u{fffd}'));
     }
 }

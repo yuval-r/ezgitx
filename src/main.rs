@@ -51,6 +51,13 @@ async fn dispatch(cli: Cli) -> i32 {
     let human = cli.human;
 
     match cli.command {
+        Command::Brief { target, no_record } => match ws.select(&target.targeting(), &cwd) {
+            Ok(repos) => {
+                commands::brief::run(&ws, repos, target.dirty, jobs, max_bytes, no_record, human)
+                    .await
+            }
+            Err(e) => usage(e),
+        },
         Command::Status { target } => match ws.select(&target.targeting(), &cwd) {
             Ok(repos) => {
                 commands::status::run(&ws, repos, target.dirty, jobs, max_bytes, human).await
