@@ -58,6 +58,14 @@ async fn dispatch(cli: Cli) -> i32 {
             }
             Err(e) => usage(e),
         },
+        Command::Changed { target, since } => {
+            match select_filtered(&ws, &target, &cwd, jobs, max_bytes).await {
+                Ok(repos) => {
+                    commands::changed::run(&ws, repos, since, jobs, max_bytes, human).await
+                }
+                Err(e) => usage(e),
+            }
+        }
         Command::Status { target } => match ws.select(&target.targeting(), &cwd) {
             Ok(repos) => {
                 commands::status::run(&ws, repos, target.dirty, jobs, max_bytes, human).await

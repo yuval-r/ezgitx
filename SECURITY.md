@@ -24,7 +24,8 @@ your workspace, the same rule applies to any config the agent did not write
 from your own instructions.
 
 Read-only commands are safe to run anywhere: `ezgitx brief` (offline session
-snapshot; never fetches), `ezgitx status`, `ezgitx pull` (fetch + fast-forward
+snapshot; never fetches), `ezgitx changed` (offline cross-repo delta), `ezgitx
+status`, `ezgitx pull` (fetch + fast-forward
 only, never a merge commit), and the default `ezgitx check-impact` listing never
 execute configured commands. Only `run` and `check-impact --check` do, and only
 on the repos you target.

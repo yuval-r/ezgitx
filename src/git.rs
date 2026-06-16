@@ -141,6 +141,100 @@ pub async fn rev_exists(dir: &Path, rev: &str) -> Result<bool, ErrorInfo> {
     Ok(out.status.success())
 }
 
+/// Resolve `rev` to its short sha, or `None` if it doesn't name a commit in
+/// `dir` (absent ref / unreachable). `Err` only on spawn failure. Combines the
+/// existence check with the display sha; uses the raw `git` helper so a clean
+/// exit-1 isn't turned into a `git_failed`.
+pub async fn resolve_commit(dir: &Path, rev: &str) -> Result<Option<String>, ErrorInfo> {
+    let spec = format!("{rev}^{{commit}}");
+    let out = git(dir, &["rev-parse", "--verify", "--quiet", "--short", &spec]).await?;
+    if out.status.success() {
+        Ok(Some(
+            String::from_utf8_lossy(&out.stdout).trim().to_string(),
+        ))
+    } else {
+        Ok(None)
+    }
+}
+
+/// A single changed path in a range, for `changed --since`.
+#[derive(Debug, PartialEq, Clone, Serialize)]
+pub struct ChangedFile {
+    /// Single-letter change code: `A`/`M`/`D`/`R`/`C`/`T`.
+    pub status: String,
+    pub path: String,
+}
+
+/// Listing changed files in a range: the full count plus a capped sample.
+#[derive(Debug, PartialEq)]
+pub struct ChangedFiles {
+    pub total: usize,
+    pub files: Vec<ChangedFile>,
+    pub truncated: bool,
+}
+
+/// Changed files in `range` (e.g. "A..HEAD"), capped to `max_count` entries and
+/// `max_bytes` of accumulated path bytes. Offline; no network.
+pub async fn changed_files(
+    dir: &Path,
+    range: &str,
+    max_count: usize,
+    max_bytes: usize,
+) -> Result<ChangedFiles, ErrorInfo> {
+    let out = git_ok(dir, &["diff", "--name-status", "-z", range], max_bytes).await?;
+    Ok(parse_name_status(&out.stdout, max_count, max_bytes))
+}
+
+/// Parse `git diff --name-status -z` output. Free function so the framing/capping
+/// logic is unit-testable without spawning git.
+///
+/// `-z` yields a flat NUL-separated token stream: `<status>\0<path>` per change,
+/// or `<status>\0<old>\0<new>` for renames/copies (status starts `R`/`C`) — we
+/// report the new path. Status is normalized to its first char.
+pub fn parse_name_status(stdout: &[u8], max_count: usize, max_bytes: usize) -> ChangedFiles {
+    let mut tokens = stdout.split(|&b| b == 0).filter(|t| !t.is_empty());
+    let mut total = 0usize;
+    let mut files = Vec::new();
+    let mut path_bytes = 0usize;
+    let mut stop = false;
+
+    while let Some(status_tok) = tokens.next() {
+        // Status codes are always ASCII, so the first byte is the code — no need
+        // to decode the whole token.
+        let code = status_tok.first().copied().unwrap_or(b'?') as char;
+        // Rename/copy carry two paths (old, new); report the new one.
+        let path_tok = if matches!(code, 'R' | 'C') {
+            tokens.next(); // old path
+            tokens.next() // new path
+        } else {
+            tokens.next() // path
+        };
+        let Some(path_tok) = path_tok else { break }; // malformed tail
+        total += 1;
+        if stop || files.len() >= max_count {
+            stop = true;
+            continue;
+        }
+        let path = String::from_utf8_lossy(path_tok).into_owned();
+        if !files.is_empty() && path_bytes + path.len() > max_bytes {
+            stop = true;
+            continue;
+        }
+        path_bytes += path.len();
+        files.push(ChangedFile {
+            status: code.to_string(),
+            path,
+        });
+    }
+
+    let truncated = total > files.len();
+    ChangedFiles {
+        total,
+        files,
+        truncated,
+    }
+}
+
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum TreeState {
     Clean,
@@ -392,5 +486,83 @@ mod tests {
         assert_eq!(r.total, 1);
         assert_eq!(r.commits[0].subject, "");
         assert!(r.commits[0].sha.contains('\u{fffd}'));
+    }
+
+    /// Mimic `git diff --name-status -z`: `<status>\0<path>\0` tokens.
+    fn name_status_bytes(entries: &[(&str, &str)]) -> Vec<u8> {
+        let mut out = Vec::new();
+        for (status, path) in entries {
+            out.extend_from_slice(status.as_bytes());
+            out.push(0);
+            out.extend_from_slice(path.as_bytes());
+            out.push(0);
+        }
+        out
+    }
+
+    #[test]
+    fn parse_name_status_empty() {
+        let r = parse_name_status(b"", 50, 2048);
+        assert_eq!(r.total, 0);
+        assert!(r.files.is_empty());
+        assert!(!r.truncated);
+    }
+
+    #[test]
+    fn parse_name_status_basic_codes() {
+        let bytes = name_status_bytes(&[("M", "src/a.rs"), ("A", "src/b.rs"), ("D", "old.rs")]);
+        let r = parse_name_status(&bytes, 50, 2048);
+        assert_eq!(r.total, 3);
+        assert_eq!(r.files.len(), 3);
+        assert_eq!(r.files[0].status, "M");
+        assert_eq!(r.files[0].path, "src/a.rs");
+        assert_eq!(r.files[1].status, "A");
+        assert_eq!(r.files[2].status, "D");
+        assert!(!r.truncated);
+    }
+
+    #[test]
+    fn parse_name_status_rename_reports_new_path() {
+        // Rename: status, old, new — report the new path.
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"R100\0old/name.rs\0new/name.rs\0");
+        // followed by a normal modify, to prove the stream stays aligned.
+        bytes.extend_from_slice(b"M\0other.rs\0");
+        let r = parse_name_status(&bytes, 50, 2048);
+        assert_eq!(r.total, 2);
+        assert_eq!(r.files[0].status, "R");
+        assert_eq!(r.files[0].path, "new/name.rs");
+        assert_eq!(r.files[1].status, "M");
+        assert_eq!(r.files[1].path, "other.rs");
+    }
+
+    #[test]
+    fn parse_name_status_caps_by_count() {
+        let bytes = name_status_bytes(&[("M", "a"), ("M", "b"), ("M", "c")]);
+        let r = parse_name_status(&bytes, 2, 2048);
+        assert_eq!(r.total, 3);
+        assert_eq!(r.files.len(), 2);
+        assert!(r.truncated);
+    }
+
+    #[test]
+    fn parse_name_status_caps_by_bytes() {
+        let bytes = name_status_bytes(&[("M", "aaaa"), ("M", "bbbb")]);
+        let r = parse_name_status(&bytes, 50, 4);
+        assert_eq!(r.total, 2);
+        assert_eq!(r.files.len(), 1); // first fits (4 bytes); second would exceed
+        assert!(r.truncated);
+    }
+
+    #[test]
+    fn parse_name_status_lossy_path() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"A\0");
+        bytes.extend_from_slice(&[0xff, 0xfe]); // invalid UTF-8 path
+        bytes.push(0);
+        let r = parse_name_status(&bytes, 50, 2048);
+        assert_eq!(r.total, 1);
+        assert_eq!(r.files[0].status, "A");
+        assert!(r.files[0].path.contains('\u{fffd}'));
     }
 }
