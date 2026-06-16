@@ -19,6 +19,8 @@ the shared library breaks the app sitting right next to it.
 ezgitx is a small command-line tool that fixes this. It gives your agent
 (and you) one way to:
 
+- catch up at the start of a session: a snapshot of every repo plus what
+  changed since the agent last looked (`ezgitx brief`)
 - see the state of every repo at once (`ezgitx status`)
 - update them all in one go (`ezgitx pull`)
 - build or test everything in parallel, in dependency order
@@ -251,6 +253,7 @@ can run the whole thing yourself.
 ## Commands
 
 ```sh
+ezgitx brief                   # session snapshot + what changed since the last brief (offline)
 ezgitx status                  # working-tree + sync state per repo (never fetches)
 ezgitx pull                    # concurrent fetch + ff-only merge (never merge commits)
 ezgitx run "cargo test"        # run a command in each repo, in parallel

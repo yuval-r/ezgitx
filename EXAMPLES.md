@@ -4,7 +4,7 @@ A complete, runnable walkthrough of ezgitx on a realistic multi-repo
 workspace. Every command and block of output below is real. Run them and
 you'll get the same shape of result.
 
-_Captured 2026-06-13 against ezgitx 0.1.0. The upstream repos drift over time;
+_Captured 2026-06-13 against ezgitx 0.2.0. The upstream repos drift over time;
 if a step looks different from what you see, the exact commits this was run
 against are listed under [Notes](#notes)._
 

@@ -23,10 +23,11 @@ then run `ezgitx run` without reading the config first. If an AI agent operates
 your workspace, the same rule applies to any config the agent did not write
 from your own instructions.
 
-Read-only commands are safe to run anywhere: `ezgitx status`, `ezgitx pull`
-(fetch + fast-forward only, never a merge commit), and the default
-`ezgitx check-impact` listing never execute configured commands. Only `run`
-and `check-impact --check` do, and only on the repos you target.
+Read-only commands are safe to run anywhere: `ezgitx brief` (offline session
+snapshot; never fetches), `ezgitx status`, `ezgitx pull` (fetch + fast-forward
+only, never a merge commit), and the default `ezgitx check-impact` listing never
+execute configured commands. Only `run` and `check-impact --check` do, and only
+on the repos you target.
 
 ## What ezgitx does not do
 
@@ -34,9 +35,9 @@ and `check-impact --check` do, and only on the repos you target.
   every child process).
 - It does not send your code, config, or git state anywhere. It shells out to
   your local `git` and your shell, nothing else.
-- It stores no secrets. Lock files (`.ezgitx/locks/`) and freshness records
-  (`.ezgitx/state/`) hold only a PID, hostname, timestamp, command string, and
-  commit SHA.
+- It stores no secrets. Lock files (`.ezgitx/locks/`) and freshness / brief
+  session records (`.ezgitx/state/`) hold only a PID, hostname, timestamp,
+  command string, and commit SHA.
 
 ## Supported versions
 
