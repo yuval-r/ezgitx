@@ -42,7 +42,9 @@ pub fn unique_suffix() -> u64 {
 /// Atomic write: write to a pid+counter-suffixed tmp file in the same dir, then
 /// rename over the target so a reader never sees a half-written file.
 fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    let dir = path.parent().unwrap();
+    let dir = path.parent().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "path has no parent")
+    })?;
     std::fs::create_dir_all(dir)?;
     let fname = path.file_name().and_then(|s| s.to_str()).unwrap_or("state");
     let tmp = dir.join(format!(

@@ -74,6 +74,11 @@ const HEADERS: &[&str] = &[
     "NEW",
 ];
 
+/// Render an optional numeric cell for human mode: the value, or "-" when absent.
+fn opt<T: std::fmt::Display>(v: Option<T>) -> String {
+    v.map_or("-".to_string(), |n| n.to_string())
+}
+
 pub async fn run(
     ws: &Workspace,
     repos: Vec<Repo>,
@@ -213,7 +218,6 @@ pub async fn run(
                 if line.new_commits.unwrap_or(0) > 0 {
                     with_new_commits += 1;
                 }
-                let opt = |v: Option<i64>| v.map_or("-".to_string(), |n| n.to_string());
                 let row = vec![
                     line.repo.clone(),
                     line.branch.clone().unwrap_or_else(|| "-".to_string()),
@@ -224,7 +228,7 @@ pub async fn run(
                     line.stale_deps
                         .clone()
                         .map_or("-".to_string(), |d| d.join(",")),
-                    line.new_commits.map_or("-".to_string(), |n| n.to_string()),
+                    opt(line.new_commits),
                 ];
                 emitter.emit(&line, row);
             }
