@@ -1,6 +1,6 @@
 ---
 name: ezgitx
-description: Multi-repo git operations across this workspace. Use when reading repo status, pulling updates, running commands across sibling repos, or checking the cross-repo impact of a change.
+description: Multi-repo git operations across this workspace. Use when catching up at the start of a session on what changed since you last looked, reading repo status, pulling updates, running commands across sibling repos, or checking the cross-repo impact of a change.
 ---
 
 # ezgitx — multi-repo operations for this workspace
@@ -47,6 +47,16 @@ Target narrowly instead of scanning everything:
 
 ## Commands
 
+- `ezgitx brief` — **run this first, at the start of a session.** A snapshot of
+  every repo (same fields as `status`) plus, per repo, `new_commits` (count) and
+  a `commits` list of `{sha, subject}` (newest-first, capped) added locally since
+  you last ran `brief`. Offline; never fetches. The first run in a workspace has
+  no delta (it just records a baseline); later runs show only what's newer. Pass
+  `--no-record` to peek without advancing that baseline. With `--dirty`, only the
+  repos it shows advance their baseline, so commits in a clean repo it filtered
+  out still surface in the next unfiltered `brief` (never silently skipped). Ends
+  with a `{"type": "summary", ...}` line. Prefer this over re-scanning the
+  workspace by hand each session.
 - `ezgitx status` — working-tree + sync state per repo. Never fetches;
   `ahead`/`behind` reflect the last fetch. `state` is `clean` | `dirty` |
   `detached` | `conflicted`.

@@ -19,6 +19,8 @@ the shared library breaks the app sitting right next to it.
 ezgitx is a small command-line tool that fixes this. It gives your agent
 (and you) one way to:
 
+- catch up at the start of a session: a snapshot of every repo plus what
+  changed since the agent last looked (`ezgitx brief`)
 - see the state of every repo at once (`ezgitx status`)
 - update them all in one go (`ezgitx pull`)
 - build or test everything in parallel, in dependency order
@@ -175,6 +177,22 @@ That's it. From now on a fresh Claude Code session in this folder finds the
 skill and runs ezgitx on its own. You never have to explain your layout
 again.
 
+And at the start of each session, one command catches the agent up on what
+moved across the workspace since it last looked. It prints a snapshot plus,
+per repo, the commits added since the previous `brief`:
+
+```sh
+$ ezgitx brief
+{"repo":"backend","path":"/Users/you/my-workspace/backend","branch":"main","head":"7e8f9a0","state":"clean","ahead":0,"behind":0,"stale_deps":["shared"],"new_commits":2,"commits":[{"sha":"7e8f9a0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a","subject":"fix auth token refresh"},{"sha":"3c2b1a0f9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b","subject":"bump shared to 2.1"}],"truncated":false}
+{"repo":"frontend","path":"/Users/you/my-workspace/frontend","branch":"main","head":"9f8e7d6","state":"clean","ahead":0,"behind":0,"stale_deps":["shared"],"new_commits":0,"commits":[],"truncated":false}
+{"repo":"shared","path":"/Users/you/my-workspace/shared","branch":"main","head":"4c5d6e7","state":"clean","ahead":0,"behind":0,"new_commits":0,"commits":[],"truncated":false}
+{"type":"summary","repos":3,"with_new_commits":1,"failed":0}
+```
+
+It's offline and deterministic, and never fetches. The first `brief` in a
+workspace just records a baseline (no delta yet); every run after shows only
+what's new.
+
 ### Or let your agent write the config
 
 Don't want to write the YAML by hand? Start a Claude Code (or similar)
@@ -251,6 +269,7 @@ can run the whole thing yourself.
 ## Commands
 
 ```sh
+ezgitx brief                   # session snapshot + what changed since the last brief (offline)
 ezgitx status                  # working-tree + sync state per repo (never fetches)
 ezgitx pull                    # concurrent fetch + ff-only merge (never merge commits)
 ezgitx run "cargo test"        # run a command in each repo, in parallel
@@ -295,22 +314,21 @@ the changelog.
 
 ## Why this exists
 
-I'm Yuval Roth. I'm building [EZBunny](https://ezbunny.com), AI-native
-compliance training for small healthcare practices, and its workspace is a
-pile of sibling repos that my AI coding agents kept mishandling: wrong build
-order, stale shared libraries, no idea what depended on what. ezgitx is the
-tool I built so they'd stop. It's open source because the problem clearly
-isn't mine alone.
+We build [EZBunny](https://ezbunny.com), AI-native compliance training for
+small healthcare practices. Its workspace is a pile of sibling repos that our
+AI coding agents kept mishandling: wrong build order, stale shared libraries,
+no idea what depended on what. ezgitx is the tool we built so they'd stop. We
+use it on EZBunny every day, and it's open source because the problem clearly
+isn't ours alone.
 
-Found it useful? A star helps other people find it. I'm
-[@yuval-r](https://github.com/yuval-r) on GitHub.
+Found it useful? A star helps other people find it.
 
 ## Feedback
 
 Found a bug, want a feature, or hit a workspace layout that trips it up? Open
 an issue: https://github.com/yuval-r/ezgitx/issues. Pull requests are welcome
 too. If something in this README was confusing, that counts as a bug, so tell
-me.
+us.
 
 ## License
 

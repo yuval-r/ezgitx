@@ -39,20 +39,31 @@ pub fn unique_suffix() -> u64 {
     COUNTER.fetch_add(1, Ordering::Relaxed)
 }
 
-/// Atomic write: pid+counter-suffixed tmp file + rename.
-pub fn write(root: &Path, repo: &str, record: &Record) -> std::io::Result<()> {
-    let path = state_path(root, repo);
-    let dir = path.parent().unwrap();
+/// Atomic write: write to a pid+counter-suffixed tmp file in the same dir, then
+/// rename over the target so a reader never sees a half-written file.
+fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let dir = path.parent().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "path has no parent")
+    })?;
     std::fs::create_dir_all(dir)?;
+    let fname = path.file_name().and_then(|s| s.to_str()).unwrap_or("state");
     let tmp = dir.join(format!(
-        ".{repo}.{}.{}.tmp",
+        ".{fname}.{}.{}.tmp",
         std::process::id(),
         unique_suffix()
     ));
-    std::fs::write(&tmp, serde_json::to_vec(record)?)?;
-    std::fs::rename(&tmp, &path).inspect_err(|_| {
+    if let Err(e) = std::fs::write(&tmp, bytes) {
+        let _ = std::fs::remove_file(&tmp); // don't leave a partial tmp on write failure
+        return Err(e);
+    }
+    std::fs::rename(&tmp, path).inspect_err(|_| {
         let _ = std::fs::remove_file(&tmp);
     })
+}
+
+/// Atomic write of a freshness record to `.ezgitx/state/<repo>.json`.
+pub fn write(root: &Path, repo: &str, record: &Record) -> std::io::Result<()> {
+    write_atomic(&state_path(root, repo), &serde_json::to_vec(record)?)
 }
 
 pub fn record_success(
@@ -70,6 +81,46 @@ pub fn record_success(
     };
     if let Err(e) = write(root, repo, &record) {
         eprintln!("ezgitx: failed to record freshness for {repo}: {e}");
+    }
+}
+
+/// Per-repo "last looked at" marker for `brief` (and `changed --since last-brief`).
+/// A separate file from `Record` so `brief` never contends with `run`'s freshness
+/// writes, and the two never confuse each other's semantics.
+#[derive(Serialize, Deserialize, Debug)]
+pub struct BriefBaseline {
+    /// Full 40-char HEAD sha at the last `brief`.
+    pub head: String,
+    pub recorded_at: String,
+}
+
+fn brief_path(root: &Path, repo: &str) -> PathBuf {
+    root.join(".ezgitx")
+        .join("state")
+        .join(format!("{repo}.brief.json"))
+}
+
+pub fn read_brief(root: &Path, repo: &str) -> Option<BriefBaseline> {
+    let text = std::fs::read_to_string(brief_path(root, repo)).ok()?;
+    serde_json::from_str(&text).ok()
+}
+
+/// Record the current HEAD as the new brief baseline. Best-effort, like
+/// `record_success`: a write failure warns on stderr but never aborts the command.
+pub fn write_brief(root: &Path, repo: &str, head: String) {
+    let baseline = BriefBaseline {
+        head,
+        recorded_at: jiff::Timestamp::now().to_string(),
+    };
+    let bytes = match serde_json::to_vec(&baseline) {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            eprintln!("ezgitx: failed to encode brief baseline for {repo}: {e}");
+            return;
+        }
+    };
+    if let Err(e) = write_atomic(&brief_path(root, repo), &bytes) {
+        eprintln!("ezgitx: failed to record brief baseline for {repo}: {e}");
     }
 }
 
@@ -272,5 +323,42 @@ mod tests {
     fn is_stale_true_when_no_record() {
         let w = ws(&[("app", &["core"]), ("core", &[])]);
         assert!(is_stale(&w, "app", None, &BTreeMap::new()));
+    }
+
+    #[test]
+    fn brief_baseline_round_trips() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let root = dir.path();
+        assert!(read_brief(root, "a").is_none());
+        write_brief(
+            root,
+            "a",
+            "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef".to_string(),
+        );
+        let b = read_brief(root, "a").expect("baseline");
+        assert_eq!(b.head, "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef");
+        assert!(!b.recorded_at.is_empty());
+    }
+
+    #[test]
+    fn brief_baseline_missing_or_garbage_is_none() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let root = dir.path();
+        assert!(read_brief(root, "missing").is_none());
+        let p = brief_path(root, "g");
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(&p, "not json").unwrap();
+        assert!(read_brief(root, "g").is_none());
+    }
+
+    #[test]
+    fn brief_path_distinct_from_record_path() {
+        let root = Path::new("/w");
+        assert_ne!(brief_path(root, "a"), state_path(root, "a"));
+        assert!(
+            brief_path(root, "a")
+                .to_string_lossy()
+                .ends_with("a.brief.json")
+        );
     }
 }

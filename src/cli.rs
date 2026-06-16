@@ -55,6 +55,14 @@ impl TargetArgs {
 
 #[derive(Subcommand, Debug)]
 pub enum Command {
+    /// Session snapshot + what changed since the last brief (offline; never fetches)
+    Brief {
+        #[command(flatten)]
+        target: TargetArgs,
+        /// Show the delta without advancing the recorded baseline
+        #[arg(long = "no-record")]
+        no_record: bool,
+    },
     /// Local working-tree + sync state per repo (never fetches)
     Status {
         #[command(flatten)]
