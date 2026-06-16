@@ -209,6 +209,21 @@ eq "$(field web new_commits)" "1" "peek #2: still 1 (baseline not advanced)"
 eq "$(field web new_commits)" "0" "after a recording brief: 0 new"
 
 # =============================================================================
+echo; echo "## Phase 5b — --dirty only consumes (baselines) repos it displays"
+# A clean repo hidden by --dirty must keep its baseline, so a commit made to it
+# still surfaces in the next unfiltered brief (never silently swallowed).
+DW="$(new_ws)"; mk_local "$DW" dirtyrepo; mk_local "$DW" cleanrepo
+printf 'version: 1\ngroups:\n  g:\n    - path: ./dirtyrepo\n    - path: ./cleanrepo\n' > "$DW/.ezgitx.yml"
+( cd "$DW" && "$BIN" brief >/dev/null 2>&1 )                 # baseline both (steady state)
+commit_in "$DW" cleanrepo feat.txt "clean repo commit"      # commit in the clean repo
+echo wip > "$DW/dirtyrepo/wip.txt"                          # make the other one dirty
+( cd "$DW" && "$BIN" brief --dirty >"$OUT" 2>"$ERR" ); RC=$?
+exits 0 "--dirty exits 0"
+eq "$(field cleanrepo new_commits)" "__NOREPO__" "--dirty hides the clean repo"
+( cd "$DW" && "$BIN" brief --repo cleanrepo >"$OUT" 2>"$ERR" ); RC=$?
+eq "$(field cleanrepo new_commits)" "1" "hidden repo's commit still surfaces (not consumed)"
+
+# =============================================================================
 echo; echo "## Phase 6 — --human renders an aligned table, no JSON"
 ( cd "$WS" && "$BIN" brief --human >"$OUT" 2>"$ERR" ); RC=$?
 exits 0 "brief --human exits 0"

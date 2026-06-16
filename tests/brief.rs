@@ -246,24 +246,59 @@ fn no_record_does_not_advance_baseline() {
 }
 
 #[test]
-fn dirty_filter_does_not_desync_baseline() {
+fn dirty_does_not_consume_hidden_repo_delta() {
+    // A `--dirty` brief must NOT advance the baseline of a clean repo it didn't
+    // display — otherwise commits made to that repo silently vanish from the
+    // delta stream. Only repos actually shown get their baseline advanced.
     let f = Fixture::new();
     let a = f.repo("a"); // made dirty below
-    f.repo("b"); // stays clean
+    f.repo("b"); // clean; gets a commit while hidden
     basic_config(&f);
+
+    // Steady state: both repos already have a baseline.
+    f.ezgitx().arg("brief").assert().code(0);
+
+    // A commit lands in the clean repo `b`; then `a` is made dirty.
+    f.commit(&f.root().join("b"), "feature.txt", "important");
     std::fs::write(a.join("wip.txt"), "wip").unwrap();
 
-    // `brief --dirty` shows only `a`, but records a baseline for BOTH repos.
+    // `brief --dirty` shows only `a` and must leave `b`'s baseline untouched.
     let assert = f.ezgitx().args(["brief", "--dirty"]).assert().code(0);
     let lines = jsonl(&assert.get_output().stdout);
     assert!(lines.iter().any(|l| l["repo"] == "a"));
     assert!(!lines.iter().any(|l| l["repo"] == "b"));
 
-    // `b`'s baseline advanced during the --dirty run → a new commit now deltas.
-    f.commit(&f.root().join("b"), "x.txt", "x");
+    // The next unfiltered brief STILL surfaces b's commit (not swallowed).
     let assert = f.ezgitx().args(["brief", "--repo", "b"]).assert().code(0);
     let lines = jsonl(&assert.get_output().stdout);
     assert_eq!(line_for(&lines, "b")["new_commits"], 1);
+    assert_eq!(
+        line_for(&lines, "b")["commits"][0]["subject"],
+        "add feature.txt"
+    );
+}
+
+#[test]
+fn dirty_advances_baseline_of_shown_repo() {
+    // The flip side: a repo that IS displayed under --dirty does advance, so its
+    // already-shown committed delta isn't repeated next time.
+    let f = Fixture::new();
+    let a = f.repo("a");
+    f.repo("b");
+    basic_config(&f);
+    f.ezgitx().arg("brief").assert().code(0); // baseline both
+
+    f.commit(&a, "x.txt", "x"); // committed delta in a
+    std::fs::write(a.join("wip.txt"), "wip").unwrap(); // a is dirty
+
+    let assert = f.ezgitx().args(["brief", "--dirty"]).assert().code(0);
+    let lines = jsonl(&assert.get_output().stdout);
+    assert_eq!(line_for(&lines, "a")["new_commits"], 1); // shown with its delta
+
+    // a was shown → its baseline advanced → the committed delta isn't repeated.
+    let assert = f.ezgitx().args(["brief", "--repo", "a"]).assert().code(0);
+    let lines = jsonl(&assert.get_output().stdout);
+    assert_eq!(line_for(&lines, "a")["new_commits"], 0);
 }
 
 #[test]

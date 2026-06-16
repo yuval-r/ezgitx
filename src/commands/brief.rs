@@ -204,15 +204,18 @@ pub async fn run(
         },
         |outcome| match outcome {
             Outcome::Ok(line, tree_state, to_record) => {
-                // Re-baseline every snapshotted repo (unless peeking) BEFORE the
-                // dirty skip, so a `--dirty` brief doesn't desync clean repos.
+                // Only repos we actually display advance their baseline. A
+                // `--dirty` brief must not consume the delta of a clean repo it
+                // never showed — that repo's commits would vanish from the
+                // stream. This mirrors how --repo/--group only touch the repos
+                // they select: you only consume a delta you were shown.
+                if dirty_only && !matches!(tree_state, TreeState::Dirty | TreeState::Conflicted) {
+                    return;
+                }
                 if !no_record {
                     if let Some(full) = to_record {
                         state::write_brief(&root_cb, &line.repo, full);
                     }
-                }
-                if dirty_only && !matches!(tree_state, TreeState::Dirty | TreeState::Conflicted) {
-                    return;
                 }
                 repos_count += 1;
                 if line.new_commits.unwrap_or(0) > 0 {
