@@ -177,6 +177,22 @@ That's it. From now on a fresh Claude Code session in this folder finds the
 skill and runs ezgitx on its own. You never have to explain your layout
 again.
 
+And at the start of each session, one command catches the agent up on what
+moved across the workspace since it last looked — a snapshot plus, per repo,
+the commits added since the previous `brief`:
+
+```sh
+$ ezgitx brief
+{"repo":"backend","path":"/Users/you/my-workspace/backend","branch":"main","head":"7e8f9a0","state":"clean","ahead":0,"behind":0,"stale_deps":["shared"],"new_commits":2,"commits":[{"sha":"7e8f9a0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a","subject":"fix auth token refresh"},{"sha":"3c2b1a0f9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b","subject":"bump shared to 2.1"}],"truncated":false}
+{"repo":"frontend","path":"/Users/you/my-workspace/frontend","branch":"main","head":"9f8e7d6","state":"clean","ahead":0,"behind":0,"stale_deps":["shared"],"new_commits":0,"commits":[],"truncated":false}
+{"repo":"shared","path":"/Users/you/my-workspace/shared","branch":"main","head":"4c5d6e7","state":"clean","ahead":0,"behind":0,"new_commits":0,"commits":[],"truncated":false}
+{"type":"summary","repos":3,"with_new_commits":1,"failed":0}
+```
+
+It's offline and deterministic — it never fetches. The first `brief` in a
+workspace just records a baseline (no delta yet); every run after shows only
+what's new.
+
 ### Or let your agent write the config
 
 Don't want to write the YAML by hand? Start a Claude Code (or similar)
