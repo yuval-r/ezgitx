@@ -314,22 +314,21 @@ the changelog.
 
 ## Why this exists
 
-I'm Yuval Roth. I'm building [EZBunny](https://ezbunny.com), AI-native
-compliance training for small healthcare practices, and its workspace is a
-pile of sibling repos that my AI coding agents kept mishandling: wrong build
-order, stale shared libraries, no idea what depended on what. ezgitx is the
-tool I built so they'd stop. It's open source because the problem clearly
-isn't mine alone.
+We build [EZBunny](https://ezbunny.com), AI-native compliance training for
+small healthcare practices. Its workspace is a pile of sibling repos that our
+AI coding agents kept mishandling: wrong build order, stale shared libraries,
+no idea what depended on what. ezgitx is the tool we built so they'd stop. We
+use it on EZBunny every day, and it's open source because the problem clearly
+isn't ours alone.
 
-Found it useful? A star helps other people find it. I'm
-[@yuval-r](https://github.com/yuval-r) on GitHub.
+Found it useful? A star helps other people find it.
 
 ## Feedback
 
 Found a bug, want a feature, or hit a workspace layout that trips it up? Open
 an issue: https://github.com/yuval-r/ezgitx/issues. Pull requests are welcome
 too. If something in this README was confusing, that counts as a bug, so tell
-me.
+us.
 
 ## License
 
