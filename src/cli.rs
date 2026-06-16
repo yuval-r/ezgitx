@@ -63,6 +63,14 @@ pub enum Command {
         #[arg(long = "no-record")]
         no_record: bool,
     },
+    /// Files + commits that moved across repos since a ref or your last brief (offline)
+    Changed {
+        #[command(flatten)]
+        target: TargetArgs,
+        /// Git ref to diff from; defaults to your last `brief`
+        #[arg(long, default_value = "last-brief", value_name = "REF")]
+        since: String,
+    },
     /// Local working-tree + sync state per repo (never fetches)
     Status {
         #[command(flatten)]
