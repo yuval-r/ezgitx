@@ -7,7 +7,7 @@ decide what runs, and **both are trusted to the same degree as a shell script
 you wrote yourself**:
 
 - **`.ezgitx.yml`**: its `default_cmd` and `check_cmd` fields are executed
-  verbatim through your shell when you run `ezgitx run` or
+  verbatim through your shell when you run `ezgitx run`, `ezgitx verify`, or
   `ezgitx check-impact --check`. A config can also point a repo `path` outside
   the workspace root (e.g. `../sibling` or an absolute path), in which case
   commands run in that directory.
@@ -25,10 +25,11 @@ from your own instructions.
 
 Read-only commands are safe to run anywhere: `ezgitx brief` (offline session
 snapshot; never fetches), `ezgitx changed` (offline cross-repo delta), `ezgitx
-status`, `ezgitx pull` (fetch + fast-forward
-only, never a merge commit), and the default `ezgitx check-impact` listing never
-execute configured commands. Only `run` and `check-impact --check` do, and only
-on the repos you target.
+status`, `ezgitx sessions` (lists held locks; never breaks them), `ezgitx pull`
+(fetch + fast-forward only, never a merge commit), and the default `ezgitx
+check-impact` listing never execute configured commands. Only `run`, `verify`,
+and `check-impact --check` do: `run` and `check-impact` on the repos you target,
+and `verify` on every dirty repo plus its downstream closure.
 
 ## What ezgitx does not do
 

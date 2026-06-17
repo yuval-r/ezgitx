@@ -88,7 +88,7 @@ pub async fn run(
         })
     };
 
-    let (passed, failed) = exec::execute_waves(
+    let tally = exec::execute_waves(
         ws,
         waves,
         command_for,
@@ -100,8 +100,12 @@ pub async fn run(
     )
     .await;
 
-    let summary = RunSummary::new(passed, failed, started.elapsed().as_millis() as u64);
+    let summary = RunSummary::new(
+        tally.passed,
+        tally.failed,
+        started.elapsed().as_millis() as u64,
+    );
     emitter.emit_summary(&summary, summary.human());
     emitter.finish();
-    aggregate_exit(failed > 0, false)
+    aggregate_exit(tally.failed > 0, false)
 }

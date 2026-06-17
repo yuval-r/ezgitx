@@ -4,4 +4,6 @@ pub mod check_impact;
 pub mod init_skill;
 pub mod pull;
 pub mod run;
+pub mod sessions;
 pub mod status;
+pub mod verify;

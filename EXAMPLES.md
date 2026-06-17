@@ -4,9 +4,10 @@ A complete, runnable walkthrough of ezgitx on a realistic multi-repo
 workspace. Every command and block of output below is real. Run them and
 you'll get the same shape of result.
 
-_Captured 2026-06-13 against ezgitx 0.2.0. The upstream repos drift over time;
-if a step looks different from what you see, the exact commits this was run
-against are listed under [Notes](#notes)._
+_Captured 2026-06-13 against ezgitx 0.2.0; output updated for 0.4.0, which adds
+the `build` column to `status`, plus the `verify` and `sessions` commands. The
+upstream repos drift over time; if a step looks different from what you see, the
+exact commits this was run against are listed under [Notes](#notes)._
 
 This walkthrough uses **Claude Code** as the coding agent. The `ezgitx`
 commands are identical everywhere. The pasted setup prompt in step 3 works
@@ -167,17 +168,18 @@ ezgitx status --all --human
 ```
 
 ```
-REPO        BRANCH  HEAD     STATE  AHEAD  BEHIND  STALE_DEPS
-multidict   master  8b7c4d8  clean  0      0       -
-frozenlist  master  0334ec8  dirty  0      0       -
-aiosignal   master  2a67bbd  clean  0      0
-yarl        master  7b66654  dirty  0      0
-aiohttp     master  31702b2  clean  0      0
+REPO        BRANCH  HEAD     STATE  AHEAD  BEHIND  STALE_DEPS  BUILD
+multidict   master  8b7c4d8  clean  0      0       -           fresh
+frozenlist  master  0334ec8  dirty  0      0       -           fresh
+aiosignal   master  2a67bbd  clean  0      0                   fresh
+yarl        master  7b66654  dirty  0      0                   fresh
+aiohttp     master  31702b2  clean  0      0                   fresh
 ```
 
-Nothing is stale: every repo sits at the commit ezgitx last built it at. The
-`STALE_DEPS` column reads `-` for a repo with no declared upstreams and is
-blank when its upstreams are all fresh. (`frozenlist` and `yarl` show `dirty`
+Nothing is stale: every repo sits at the commit ezgitx last built it at, so the
+`BUILD` column reads `fresh` across the board. The `STALE_DEPS` column reads `-`
+for a repo with no declared upstreams and is blank when its upstreams are all
+fresh. (`frozenlist` and `yarl` show `dirty`
 because building C extensions writes generated files into their trees. In your
 own repos, `.gitignore` those build artifacts.)
 
@@ -198,13 +200,17 @@ ezgitx status --all --human
 ```
 
 ```
-REPO        BRANCH  HEAD     STATE  AHEAD  BEHIND  STALE_DEPS
-multidict   master  215c21e  clean  1      0       -
-frozenlist  master  0334ec8  dirty  0      0       -
-aiosignal   master  2a67bbd  clean  0      0
-yarl        master  7b66654  dirty  0      0       multidict
-aiohttp     master  31702b2  clean  0      0       multidict
+REPO        BRANCH  HEAD     STATE  AHEAD  BEHIND  STALE_DEPS  BUILD
+multidict   master  215c21e  clean  1      0       -           stale
+frozenlist  master  0334ec8  dirty  0      0       -           fresh
+aiosignal   master  2a67bbd  clean  0      0                   fresh
+yarl        master  7b66654  dirty  0      0       multidict   stale
+aiohttp     master  31702b2  clean  0      0       multidict   stale
 ```
+
+The `BUILD` column flips to `stale` for `multidict` (its own HEAD moved past the
+recorded build) and for `yarl`/`aiohttp` (an upstream drifted); `frozenlist` and
+`aiosignal` are untouched and stay `fresh`.
 
 ```sh
 ezgitx check-impact --repo multidict --human
@@ -261,7 +267,45 @@ ezgitx run --repo multidict --with-dependents
 That rebuilds `multidict` plus every stale dependent (`yarl`, `aiohttp`) in
 dependency order.
 
-## 8. Teach your agent
+## 8. Confirm the change is green
+
+Before you call a cross-repo change done, gate it. Say you've edited `multidict`
+but not committed yet. `ezgitx verify` finds every dirty repo, adds everything
+downstream of it, runs each one's `check_cmd` (fallback `default_cmd`) in
+dependency order, and won't go green until they all pass:
+
+```sh
+ezgitx verify
+```
+
+```jsonl
+{"repo":"multidict","exit_code":0,"duration_ms":214,"stdout_tail":"","stderr_tail":"","truncated":false}
+{"repo":"yarl","exit_code":0,"duration_ms":231,"stdout_tail":"","stderr_tail":"","truncated":false}
+{"repo":"aiohttp","exit_code":0,"duration_ms":243,"stdout_tail":"","stderr_tail":"","truncated":false}
+{"type":"verdict","verdict":"pass","checked":3,"failed":[]}
+```
+
+`multidict` is dirty, so it and its downstream closure (`yarl`, `aiohttp`) are
+checked; `frozenlist` and `aiosignal` are untouched and skipped. Had your edit
+broken `aiohttp`'s import check, its run line would carry a non-zero `exit_code`
+and the final line would read
+`{"type":"verdict","verdict":"fail","checked":3,"failed":["aiohttp"]}`, with the
+command exiting 1. That single exit code is the gate: the agent isn't done until
+`verify` is green.
+
+In a workspace several agents share, `ezgitx sessions` lists who currently holds
+a lock: one read-only line per live lock (`repo`, `scope`, `pid`, `host`, `op`,
+`since`), so a second agent can see that a repo is mid-`pull` before piling on:
+
+```sh
+ezgitx sessions
+```
+
+```jsonl
+{"lock":"repo-aiohttp","scope":"repo","repo":"aiohttp","pid":48213,"host":"build-box","op":"pull","since":"2026-06-13T17:02:31Z"}
+```
+
+## 9. Teach your agent
 
 Once you've seen ezgitx do its job, make every future session aware of it:
 
@@ -284,6 +328,11 @@ layout.
   redundant (the import is live); in a compiled or code-generated workspace it
   is exactly what keeps artifacts honest. `--with-deps` walks upstreams,
   `--with-dependents` walks downstreams.
+- `status` surfaces that same freshness as a `build: fresh|stale` column for
+  every repo (`stale` = no recorded build, own HEAD moved, or an upstream
+  drifted). `ezgitx verify` is a gate, not a build: it runs `check_cmd` (fallback
+  `default_cmd`) and records no freshness, so running it never changes what
+  `status`/`run` consider stale.
 - This walkthrough was captured against these upstream commits. If the repos
   have moved since and a step diverges, check these out to reproduce it
   exactly: `multidict` 8b7c4d8, `frozenlist` 0334ec8, `yarl` 7b66654,

@@ -85,23 +85,12 @@ pub async fn run(
     let waves = graph::topo_waves(ws, &set);
 
     let mut emitter = Emitter::new(human, RUN_HEADERS);
-    let command_for = |repo: &crate::workspace::Repo| -> Result<String, ErrorInfo> {
-        repo.check_cmd
-            .clone()
-            .or_else(|| repo.default_cmd.clone())
-            .ok_or_else(|| {
-                ErrorInfo::new(
-                    ErrorCode::NoDefaultCmd,
-                    format!("repo {:?} has neither check_cmd nor default_cmd", repo.name),
-                )
-            })
-    };
     // check-impact never records freshness, so an empty heads map is correct.
     let heads = std::collections::BTreeMap::new();
-    let (passed, failed) = exec::execute_waves(
+    let tally = exec::execute_waves(
         ws,
         waves,
-        command_for,
+        |repo: &crate::workspace::Repo| repo.check_command(),
         jobs,
         max_bytes,
         false,
@@ -110,8 +99,12 @@ pub async fn run(
     )
     .await;
 
-    let run_summary = RunSummary::new(passed, failed, started.elapsed().as_millis() as u64);
+    let run_summary = RunSummary::new(
+        tally.passed,
+        tally.failed,
+        started.elapsed().as_millis() as u64,
+    );
     emitter.emit_summary(&run_summary, run_summary.human());
     emitter.finish();
-    aggregate_exit(failed > 0, false)
+    aggregate_exit(tally.failed > 0, false)
 }

@@ -103,6 +103,8 @@ async fn dispatch(cli: Cli) -> i32 {
         Command::CheckImpact { repo, check } => {
             commands::check_impact::run(&ws, &cwd, repo, check, jobs, max_bytes, human).await
         }
+        Command::Verify => commands::verify::run(&ws, jobs, max_bytes, human).await,
+        Command::Sessions => commands::sessions::run(&ws, human),
     }
 }
 
@@ -130,13 +132,7 @@ async fn select_filtered(
         repos,
         jobs,
         |repo| async move {
-            let keep = match git::check_is_repo(&repo.path) {
-                Err(_) => true,
-                Ok(()) => match git::status(&repo.path, max_bytes).await {
-                    Ok(s) => matches!(s.state, git::TreeState::Dirty | git::TreeState::Conflicted),
-                    Err(_) => true,
-                },
-            };
+            let keep = git::is_dirty_or_unreadable(&repo.path, max_bytes).await;
             (repo, keep)
         },
         |(repo, keep)| {

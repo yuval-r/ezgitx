@@ -108,4 +108,9 @@ pub enum Command {
         #[arg(long)]
         check: bool,
     },
+    /// Cross-repo "definition of done" gate: run check_cmd across every dirty
+    /// repo plus its downstream closure; emit a single pass/fail verdict
+    Verify,
+    /// List active advisory locks (who holds what) under .ezgitx/locks/
+    Sessions,
 }

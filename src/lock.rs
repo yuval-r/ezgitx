@@ -194,9 +194,129 @@ pub fn check_workspace_lock(root: &Path) -> Result<(), ErrorInfo> {
     Err(held_error(&path, holder))
 }
 
+/// An active advisory lock, surfaced read-only by `ezgitx sessions`.
+#[derive(Debug)]
+pub struct Session {
+    /// Lock file stem, e.g. `repo-app` or `workspace`.
+    pub lock: String,
+    /// `"repo"` or `"workspace"`.
+    pub scope: &'static str,
+    /// The repo name for a repo-scoped lock; `None` for the workspace lock.
+    pub repo: Option<String>,
+    pub info: LockInfo,
+}
+
+/// List the active (non-stale) advisory locks under `.ezgitx/locks/`, sorted by
+/// lock name. Read-only: unlike acquisition, this never breaks stale locks. It
+/// simply omits them (dead pid, expired TTL, or unparseable content).
+pub fn active_sessions(root: &Path) -> Vec<Session> {
+    let mut sessions: Vec<Session> = Vec::new();
+    let Ok(entries) = fs::read_dir(locks_dir(root)) else {
+        return sessions; // absent/unreadable locks dir → no active sessions
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("lock") {
+            continue;
+        }
+        let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        let Ok(content) = fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(info) = serde_json::from_str::<LockInfo>(&content) else {
+            continue; // unparseable → not a live session
+        };
+        if is_stale(Some(&info), DEFAULT_TTL) {
+            continue; // dead/expired holder → not active
+        }
+        let (scope, repo) = if stem == "workspace" {
+            ("workspace", None)
+        } else if let Some(name) = stem.strip_prefix("repo-") {
+            ("repo", Some(name.to_string()))
+        } else {
+            continue; // unknown lock file shape
+        };
+        sessions.push(Session {
+            lock: stem.to_string(),
+            scope,
+            repo,
+            info,
+        });
+    }
+    sessions.sort_by(|a, b| a.lock.cmp(&b.lock));
+    sessions
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn active_sessions_returns_live_and_filters_stale() {
+        let dir = tempfile::tempdir().unwrap();
+        let locks = locks_dir(dir.path());
+        fs::create_dir_all(&locks).unwrap();
+        let live = LockInfo {
+            pid: std::process::id(),
+            hostname: hostname(),
+            started_at: jiff::Timestamp::now().to_string(),
+            op: "pull".to_string(),
+        };
+        fs::write(
+            locks.join("repo-a.lock"),
+            serde_json::to_string(&live).unwrap(),
+        )
+        .unwrap();
+        // Dead pid on this host → stale, must be filtered out.
+        let stale = LockInfo {
+            pid: 999_999_999,
+            hostname: hostname(),
+            started_at: jiff::Timestamp::now().to_string(),
+            op: "pull".to_string(),
+        };
+        fs::write(
+            locks.join("repo-b.lock"),
+            serde_json::to_string(&stale).unwrap(),
+        )
+        .unwrap();
+
+        let sessions = active_sessions(dir.path());
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].repo.as_deref(), Some("a"));
+    }
+
+    #[test]
+    fn active_sessions_parses_scope_and_repo() {
+        let dir = tempfile::tempdir().unwrap();
+        let locks = locks_dir(dir.path());
+        fs::create_dir_all(&locks).unwrap();
+        let mk = |op: &str| LockInfo {
+            pid: std::process::id(),
+            hostname: hostname(),
+            started_at: jiff::Timestamp::now().to_string(),
+            op: op.to_string(),
+        };
+        fs::write(
+            locks.join("repo-app.lock"),
+            serde_json::to_string(&mk("pull")).unwrap(),
+        )
+        .unwrap();
+        fs::write(
+            locks.join("workspace.lock"),
+            serde_json::to_string(&mk("sync")).unwrap(),
+        )
+        .unwrap();
+
+        let sessions = active_sessions(dir.path());
+        assert_eq!(sessions.len(), 2);
+        let repo = sessions.iter().find(|s| s.scope == "repo").unwrap();
+        assert_eq!(repo.lock, "repo-app");
+        assert_eq!(repo.repo.as_deref(), Some("app"));
+        let ws = sessions.iter().find(|s| s.scope == "workspace").unwrap();
+        assert!(ws.repo.is_none());
+    }
 
     #[tokio::test]
     async fn acquire_and_release() {

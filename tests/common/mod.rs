@@ -154,3 +154,25 @@ pub fn summary(lines: &[serde_json::Value]) -> &serde_json::Value {
         .find(|l| l["type"] == "summary")
         .expect("summary line")
 }
+
+/// JSON for a live advisory lock held by THIS process (its pid is alive on this
+/// host, so liveness checks treat it as held).
+pub fn live_lock_json(op: &str) -> String {
+    lock_json(std::process::id(), op)
+}
+
+/// JSON for a stale advisory lock: a dead pid on this host, so liveness checks
+/// treat it as breakable / inactive.
+pub fn stale_lock_json(op: &str) -> String {
+    lock_json(999_999_999, op)
+}
+
+fn lock_json(pid: u32, op: &str) -> String {
+    // Mirror exactly what `lock.rs` writes: gethostname + an RFC 3339 jiff
+    // timestamp, so liveness/TTL classification matches production.
+    let hostname = gethostname::gethostname().to_string_lossy().into_owned();
+    let started_at = jiff::Timestamp::now();
+    format!(
+        r#"{{"pid": {pid}, "hostname": "{hostname}", "started_at": "{started_at}", "op": "{op}"}}"#
+    )
+}

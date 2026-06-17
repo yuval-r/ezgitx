@@ -2,27 +2,6 @@ mod common;
 
 use common::*;
 
-fn live_lock_json(op: &str) -> String {
-    let hostname = String::from_utf8_lossy(
-        &std::process::Command::new("hostname")
-            .output()
-            .map(|o| o.stdout)
-            .unwrap_or_default(),
-    )
-    .trim()
-    .to_string();
-    let now = std::process::Command::new("date")
-        .args(["-u", "+%Y-%m-%dT%H:%M:%SZ"])
-        .output()
-        .unwrap();
-    format!(
-        r#"{{"pid": {}, "hostname": "{}", "started_at": "{}", "op": "{op}"}}"#,
-        std::process::id(),
-        hostname,
-        String::from_utf8_lossy(&now.stdout).trim()
-    )
-}
-
 #[test]
 fn held_repo_lock_fails_pull_with_exit_3() {
     let f = Fixture::new();
