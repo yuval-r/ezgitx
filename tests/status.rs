@@ -177,3 +177,82 @@ fn human_mode_prints_table() {
     assert!(out.contains("clean"));
     assert!(!out.contains('{'), "human mode must not emit JSON: {out}");
 }
+
+#[test]
+fn build_stale_when_never_run() {
+    let f = Fixture::new();
+    f.repo("a");
+    f.config("version: 1\ngroups:\n  g:\n    - path: ./a\n");
+    let assert = f.ezgitx().args(["status", "--repo", "a"]).assert().code(0);
+    let lines = jsonl(&assert.get_output().stdout);
+    // No recorded green build yet → stale.
+    assert_eq!(lines[0]["build"], "stale");
+}
+
+#[test]
+fn build_fresh_after_recorded_run() {
+    let f = Fixture::new();
+    f.repo("a");
+    f.config("version: 1\ngroups:\n  g:\n    - path: ./a\n      default_cmd: \"true\"\n");
+    // A successful run records the green build at the current HEAD.
+    f.ezgitx().args(["run", "--repo", "a"]).assert().code(0);
+    let assert = f.ezgitx().args(["status", "--repo", "a"]).assert().code(0);
+    let lines = jsonl(&assert.get_output().stdout);
+    assert_eq!(lines[0]["build"], "fresh");
+}
+
+#[test]
+fn build_stale_after_head_moves() {
+    let f = Fixture::new();
+    let a = f.repo("a");
+    f.config("version: 1\ngroups:\n  g:\n    - path: ./a\n      default_cmd: \"true\"\n");
+    f.ezgitx().args(["run", "--repo", "a"]).assert().code(0);
+    // A new commit moves HEAD past the recorded build.
+    f.commit(&a, "more.txt", "x");
+    let assert = f.ezgitx().args(["status", "--repo", "a"]).assert().code(0);
+    let lines = jsonl(&assert.get_output().stdout);
+    assert_eq!(lines[0]["build"], "stale");
+}
+
+#[test]
+fn build_stale_when_upstream_drifts() {
+    let f = Fixture::new();
+    f.repo("lib");
+    f.repo("app");
+    f.config(
+        "version: 1\ngroups:\n  g:\n    - path: ./lib\n      default_cmd: \"true\"\n    - path: ./app\n      default_cmd: \"true\"\n      depends_on: [\"lib\"]\n",
+    );
+    // Build app against the current lib head.
+    f.ezgitx()
+        .args(["run", "--repo", "app", "--with-deps"])
+        .assert()
+        .code(0);
+    let assert = f
+        .ezgitx()
+        .args(["status", "--repo", "app"])
+        .assert()
+        .code(0);
+    let lines = jsonl(&assert.get_output().stdout);
+    assert_eq!(lines[0]["build"], "fresh");
+
+    // Moving lib drifts app's upstream manifest → app's build is stale.
+    f.commit(&f.root().join("lib"), "more.txt", "x");
+    let assert = f
+        .ezgitx()
+        .args(["status", "--repo", "app"])
+        .assert()
+        .code(0);
+    let lines = jsonl(&assert.get_output().stdout);
+    assert_eq!(lines[0]["build"], "stale");
+}
+
+#[test]
+fn human_mode_includes_build_column() {
+    let f = Fixture::new();
+    f.repo("a");
+    f.repo("b");
+    basic_config(&f);
+    let assert = f.ezgitx().args(["status", "--human"]).assert().code(0);
+    let out = String::from_utf8_lossy(&assert.get_output().stdout).to_string();
+    assert!(out.contains("BUILD"), "missing BUILD column: {out}");
+}

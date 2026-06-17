@@ -87,6 +87,15 @@ impl RunLine {
 
 pub const RUN_HEADERS: &[&str] = &["REPO", "RESULT", "DURATION"];
 
+/// Outcome of `execute_waves`: pass/fail counts plus the names of the repos that
+/// failed (or were skipped because an upstream failed), sorted. `verify` uses
+/// the names for its verdict; `run`/`check-impact` use only the counts.
+pub struct WaveTally {
+    pub passed: u64,
+    pub failed: u64,
+    pub failed_repos: Vec<String>,
+}
+
 /// Spawn `cmd` via the user's shell in `dir` (PRD §5.3), tails byte-capped.
 pub async fn shell_in_repo(repo: &str, dir: &Path, cmd: &str, max_bytes: usize) -> RunLine {
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
@@ -139,7 +148,7 @@ pub async fn execute_waves(
     record: bool,
     heads: &BTreeMap<String, String>,
     emitter: &mut Emitter,
-) -> (u64, u64) {
+) -> WaveTally {
     let mut failed_repos: BTreeSet<String> = BTreeSet::new();
     let (mut passed, mut failed) = (0u64, 0u64);
 
@@ -208,7 +217,11 @@ pub async fn execute_waves(
         )
         .await;
     }
-    (passed, failed)
+    WaveTally {
+        passed,
+        failed,
+        failed_repos: failed_repos.into_iter().collect(),
+    }
 }
 
 #[derive(Serialize)]

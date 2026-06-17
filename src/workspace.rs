@@ -14,6 +14,24 @@ pub struct Repo {
     pub depends_on: Vec<String>,
 }
 
+impl Repo {
+    /// The command for check/verify mode (`check-impact --check`, `verify`):
+    /// `check_cmd`, falling back to `default_cmd`; `no_default_cmd` when neither
+    /// is set. (`run` resolves commands differently: default_cmd, or the
+    /// explicit command for targets, so it does not use this.)
+    pub fn check_command(&self) -> Result<String, ErrorInfo> {
+        self.check_cmd
+            .clone()
+            .or_else(|| self.default_cmd.clone())
+            .ok_or_else(|| {
+                ErrorInfo::new(
+                    ErrorCode::NoDefaultCmd,
+                    format!("repo {:?} has neither check_cmd nor default_cmd", self.name),
+                )
+            })
+    }
+}
+
 #[derive(Debug)]
 pub struct Workspace {
     pub root: PathBuf,

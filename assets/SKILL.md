@@ -1,6 +1,6 @@
 ---
 name: ezgitx
-description: Multi-repo git operations across this workspace. Use when catching up at the start of a session on what changed since you last looked, reading repo status, pulling updates, running commands across sibling repos, or checking the cross-repo impact of a change.
+description: Multi-repo git operations across this workspace. Use when catching up at the start of a session on what changed since you last looked, reading repo status, pulling updates, running commands across sibling repos, checking the cross-repo impact of a change, gating a multi-repo change with a cross-repo definition-of-done check, or seeing which sessions hold repo locks.
 ---
 
 # ezgitx — multi-repo operations for this workspace
@@ -66,7 +66,9 @@ Target narrowly instead of scanning everything:
   share still works. Ends with a `{"type": "summary", ...}` line.
 - `ezgitx status` — working-tree + sync state per repo. Never fetches;
   `ahead`/`behind` reflect the last fetch. `state` is `clean` | `dirty` |
-  `detached` | `conflicted`.
+  `detached` | `conflicted`. Each repo also carries `build`: `fresh` | `stale`.
+  `stale` when there is no recorded green build, HEAD moved since one, or an
+  upstream drifted (the same freshness model surfaced by `stale_deps`).
 - `ezgitx pull` — concurrent fetch + ff-only merge. Never creates merge
   commits. Dirty repos are reported as `skipped_dirty` (the fetch still ran),
   diverged branches as `diverged` — resolve those manually.
@@ -89,6 +91,19 @@ Target narrowly instead of scanning everything:
   current (or `--repo <name>`) repo, with `depth` and dependency path `via`.
   Add `--check` to also run each affected repo's check command in
   dependency order.
+- `ezgitx verify`: the cross-repo **definition-of-done gate**. Scans the whole
+  workspace for uncommitted changes, then runs each repo's `check_cmd` (fallback
+  `default_cmd`) across every dirty repo **plus everything downstream of a dirty
+  repo**, in dependency order. Streams the per-repo run lines, then one verdict
+  line `{"type": "verdict", "verdict": "pass"|"fail", "checked": N, "failed":
+  [...]}`. Exit 0 only when every checked repo passed. **Run this before claiming
+  a multi-repo change is done**: it catches the downstream repo a change quietly
+  broke. It is a gate, not a build: it records no freshness.
+- `ezgitx sessions`: read-only list of **active advisory locks** under
+  `.ezgitx/locks/`: one line per live lock with `scope` (`repo` | `workspace`),
+  `repo` (for repo locks), `pid`, `host`, `op`, and `since`. Use it in a
+  multi-agent workspace to see who is touching what. Stale locks (dead process or
+  expired TTL) are omitted; it never breaks them.
 
 ## Cross-repo dependency workflow
 

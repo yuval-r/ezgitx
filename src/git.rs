@@ -346,6 +346,19 @@ pub async fn status(dir: &Path, max_bytes: usize) -> Result<PorcelainStatus, Err
     Ok(parse_porcelain_v2(&String::from_utf8_lossy(&out.stdout)))
 }
 
+/// Whether a repo should be treated as "dirty" for selection or verification:
+/// it has uncommitted changes or conflicts, or its status can't be read, the
+/// latter kept so the problem surfaces downstream (lazy validation, PRD §4.3).
+pub async fn is_dirty_or_unreadable(dir: &Path, max_bytes: usize) -> bool {
+    match check_is_repo(dir) {
+        Err(_) => true,
+        Ok(()) => match status(dir, max_bytes).await {
+            Ok(s) => matches!(s.state, TreeState::Dirty | TreeState::Conflicted),
+            Err(_) => true,
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

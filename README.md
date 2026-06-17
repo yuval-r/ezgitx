@@ -27,6 +27,9 @@ ezgitx is a small command-line tool that fixes this. It gives your agent
   (`ezgitx run --all --with-deps`)
 - find out what breaks what: change a shared library and
   `ezgitx check-impact` lists everything downstream that needs re-checking
+- gate a multi-repo change before calling it done: `ezgitx verify` runs each
+  repo's checks across everything you changed *and* everything downstream, and
+  stays red until they all pass
 
 It never stops to ask questions, its output is machine readable, and it can
 install its own instructions into your workspace (`ezgitx init-skill`) so
@@ -78,8 +81,9 @@ the agent I/O contract:
   (0 ok / 1 repo failure / 2 usage or config / 3 lock contention). The
   output is the API; breaking a schema means a major version.
 - Cross-repo dependency awareness: a declared dependency DAG, commit-hash
-  freshness tracking, `run --with-deps`, and `check-impact`, so agents
-  aren't blind to upstream changes.
+  freshness tracking (surfaced as `build: fresh|stale` in `status`),
+  `run --with-deps`, `check-impact`, and a `verify` definition-of-done gate,
+  so agents aren't blind to upstream changes.
 - Self-installing agent instructions: `ezgitx init-skill` generates a
   Claude Code skill that teaches agents the contract.
 
@@ -141,9 +145,9 @@ See the state of every repo at once, one JSON line each:
 
 ```sh
 $ ezgitx status
-{"repo":"backend","path":"/Users/you/my-workspace/backend","branch":"main","head":"a1b2c3d","state":"clean","ahead":0,"behind":0,"stale_deps":["shared"]}
-{"repo":"frontend","path":"/Users/you/my-workspace/frontend","branch":"main","head":"9f8e7d6","state":"dirty","ahead":0,"behind":0,"stale_deps":["shared"]}
-{"repo":"shared","path":"/Users/you/my-workspace/shared","branch":"main","head":"4c5d6e7","state":"clean","ahead":0,"behind":0}
+{"repo":"backend","path":"/Users/you/my-workspace/backend","branch":"main","head":"a1b2c3d","state":"clean","ahead":0,"behind":0,"stale_deps":["shared"],"build":"stale"}
+{"repo":"frontend","path":"/Users/you/my-workspace/frontend","branch":"main","head":"9f8e7d6","state":"dirty","ahead":0,"behind":0,"stale_deps":["shared"],"build":"stale"}
+{"repo":"shared","path":"/Users/you/my-workspace/shared","branch":"main","head":"4c5d6e7","state":"clean","ahead":0,"behind":0,"build":"stale"}
 ```
 
 Pull all of them (fetch plus fast-forward, never a merge commit):
@@ -279,6 +283,8 @@ ezgitx run --with-deps         # build stale upstream deps first, in dependency 
 ezgitx run --with-dependents   # also rebuild stale repos downstream of a change
 ezgitx check-impact            # what's downstream of the current repo?
 ezgitx check-impact --check    # ...and run each affected repo's check_cmd
+ezgitx verify                  # cross-repo done-gate: check every dirty repo + its downstream
+ezgitx sessions                # list active advisory locks (who holds what)
 ezgitx init-skill              # generate the agent-facing skill file
 ```
 
@@ -302,7 +308,8 @@ results stream as repos finish. Multiple agent sessions can work in the same
 workspace concurrently: `pull` takes per-repo advisory locks
 (`.ezgitx/locks/`), `run` takes none. Lock contention fails instantly with
 exit code 3; `--wait <secs>` opts into bounded blocking. Stale locks (dead
-process, or older than 10 minutes) are broken automatically.
+process, or older than 10 minutes) are broken automatically. `ezgitx sessions`
+lists the locks currently held (read-only; it never breaks them).
 
 ## Versioning
 

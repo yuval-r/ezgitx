@@ -1,5 +1,4 @@
 use std::collections::BTreeSet;
-use std::sync::Arc;
 
 use serde::Serialize;
 
@@ -10,8 +9,8 @@ use crate::output::Emitter;
 use crate::state;
 use crate::workspace::{Repo, Workspace};
 
-/// A repo paired with the names of its transitive upstreams, if any.
-type PreparedRepo = (Repo, Option<BTreeSet<String>>);
+/// A repo paired with its precomputed build freshness and stale-deps list.
+type PreparedRepo = (Repo, &'static str, Option<Vec<String>>);
 
 #[derive(Serialize)]
 struct StatusLine {
@@ -25,6 +24,9 @@ struct StatusLine {
     /// V2 (PRD §9.3): present only for repos that declare dependencies.
     #[serde(skip_serializing_if = "Option::is_none")]
     stale_deps: Option<Vec<String>>,
+    /// Build freshness vs. the last recorded green build (`state::is_stale`):
+    /// `"stale"` when there is no record, HEAD has moved, or an upstream drifted.
+    build: &'static str,
 }
 
 #[derive(Serialize)]
@@ -46,6 +48,7 @@ const HEADERS: &[&str] = &[
     "AHEAD",
     "BEHIND",
     "STALE_DEPS",
+    "BUILD",
 ];
 
 pub async fn run(
@@ -61,7 +64,7 @@ pub async fn run(
 
     // Resolve each repo's transitive upstream names up front (cheap, no git).
     let root = ws.root.clone();
-    let prepared: Vec<PreparedRepo> = repos
+    let with_upstreams: Vec<(Repo, Option<BTreeSet<String>>)> = repos
         .into_iter()
         .map(|repo| {
             let upstreams = if repo.depends_on.is_empty() {
@@ -73,49 +76,59 @@ pub async fn run(
         })
         .collect();
 
-    // Probe every distinct upstream's HEAD once, up front (honoring the global
-    // `jobs` cap), then share the snapshot across the per-repo tasks. Probing
-    // inside each task would multiply concurrency (jobs x jobs) and re-probe
-    // upstreams shared by multiple repos.
-    let all_upstreams: BTreeSet<String> = prepared
-        .iter()
-        .filter_map(|(_, upstreams)| upstreams.as_ref())
-        .flatten()
-        .cloned()
+    // Probe HEADs once for every repo we report on AND every distinct upstream
+    // (honoring the global `jobs` cap). The repo's own HEAD is needed to judge
+    // build freshness; upstream HEADs feed the stale-deps manifest check.
+    let mut probe: BTreeSet<String> = BTreeSet::new();
+    for (repo, upstreams) in &with_upstreams {
+        probe.insert(repo.name.clone());
+        if let Some(names) = upstreams {
+            probe.extend(names.iter().cloned());
+        }
+    }
+    let heads = state::current_heads(state::with_paths(ws, probe), jobs, max_bytes).await;
+
+    // Compute freshness before spawning: is_stale/deps_drift need `ws` and the
+    // shared heads snapshot, and run_parallel tasks must be 'static (they cannot
+    // borrow `ws`). Reads each repo's state record once.
+    let prepared: Vec<PreparedRepo> = with_upstreams
+        .into_iter()
+        .map(|(repo, upstreams)| {
+            let record = state::read(&root, &repo.name);
+            let build = if state::is_stale(ws, &repo.name, record.as_ref(), &heads) {
+                "stale"
+            } else {
+                "fresh"
+            };
+            let stale_deps =
+                upstreams.map(|names| state::deps_drift(&names, record.as_ref(), &heads));
+            (repo, build, stale_deps)
+        })
         .collect();
-    let heads =
-        Arc::new(state::current_heads(state::with_paths(ws, all_upstreams), jobs, max_bytes).await);
 
     run_parallel(
         prepared,
         jobs,
-        |(repo, upstreams)| {
-            let root = root.clone();
-            let heads = heads.clone();
-            async move {
-                if let Err(e) = git::check_is_repo(&repo.path) {
-                    return Outcome::Err(repo.name, e);
-                }
-                let stale_deps = upstreams.map(|names| {
-                    let record = state::read(&root, &repo.name);
-                    state::deps_drift(&names, record.as_ref(), &heads)
-                });
-                match git::status(&repo.path, max_bytes).await {
-                    Ok(s) => Outcome::Ok(
-                        Box::new(StatusLine {
-                            repo: repo.name,
-                            path: repo.path.display().to_string(),
-                            branch: s.branch,
-                            head: s.head,
-                            state: s.state.as_str(),
-                            ahead: s.ahead,
-                            behind: s.behind,
-                            stale_deps,
-                        }),
-                        s.state,
-                    ),
-                    Err(e) => Outcome::Err(repo.name, e),
-                }
+        |(repo, build, stale_deps)| async move {
+            if let Err(e) = git::check_is_repo(&repo.path) {
+                return Outcome::Err(repo.name, e);
+            }
+            match git::status(&repo.path, max_bytes).await {
+                Ok(s) => Outcome::Ok(
+                    Box::new(StatusLine {
+                        repo: repo.name,
+                        path: repo.path.display().to_string(),
+                        branch: s.branch,
+                        head: s.head,
+                        state: s.state.as_str(),
+                        ahead: s.ahead,
+                        behind: s.behind,
+                        stale_deps,
+                        build,
+                    }),
+                    s.state,
+                ),
+                Err(e) => Outcome::Err(repo.name, e),
             }
         },
         |outcome| match outcome {
@@ -134,6 +147,7 @@ pub async fn run(
                     line.stale_deps
                         .clone()
                         .map_or("-".to_string(), |d| d.join(",")),
+                    line.build.to_string(),
                 ];
                 emitter.emit(&line, row);
             }
@@ -144,6 +158,7 @@ pub async fn run(
                     "-".into(),
                     "-".into(),
                     format!("error: {}", error.code.as_str()),
+                    "-".into(),
                     "-".into(),
                     "-".into(),
                     "-".into(),
